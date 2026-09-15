@@ -49,6 +49,9 @@ pub enum PortCreateError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FilterConnectError(i32);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FilterActivationError(i32);
+
 impl fmt::Display for FilterCreateError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -90,6 +93,24 @@ impl fmt::Display for FilterConnectError {
 }
 
 impl std::error::Error for FilterConnectError {}
+
+impl FilterActivationError {
+    pub fn raw_code(self) -> i32 {
+        self.0
+    }
+}
+
+impl fmt::Display for FilterActivationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "PipeWire failed to change filter activation (error {})",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for FilterActivationError {}
 
 static FILTER_EVENTS: sys::pw_filter_events = sys::pw_filter_events {
     version: sys::PW_VERSION_FILTER_EVENTS,
@@ -323,7 +344,8 @@ impl UnconnectedFilter {
         let result = unsafe {
             sys::pw_filter_connect(
                 self.raw.as_ptr(),
-                sys::pw_filter_flags_PW_FILTER_FLAG_INACTIVE,
+                sys::pw_filter_flags_PW_FILTER_FLAG_INACTIVE
+                    | sys::pw_filter_flags_PW_FILTER_FLAG_RT_PROCESS,
                 std::ptr::null_mut(),
                 0,
             )
@@ -336,6 +358,16 @@ impl UnconnectedFilter {
 }
 
 impl ConnectedFilter {
+    pub fn set_active(&mut self, active: bool) -> Result<(), FilterActivationError> {
+        // SAFETY: the connected filter is uniquely owned by self. PipeWire
+        // synchronizes the requested state change with its processing loop.
+        let result = unsafe { sys::pw_filter_set_active(self.filter.raw.as_ptr(), active) };
+        if result < 0 {
+            return Err(FilterActivationError(result));
+        }
+        Ok(())
+    }
+
     pub fn node_id(&self) -> Option<u32> {
         self.filter.node_id()
     }
@@ -445,7 +477,7 @@ mod tests {
         filter
             .add_mono_port(PortDirection::Output, "output_FL", "FL")
             .unwrap();
-        let filter = filter.connect_inactive().unwrap();
+        let mut filter = filter.connect_inactive().unwrap();
 
         let deadline = Instant::now() + Duration::from_secs(2);
         while filter.node_id().is_none() && Instant::now() < deadline {
@@ -460,5 +492,7 @@ mod tests {
             filter.state().0,
             FilterState::Connecting | FilterState::Paused
         ));
+        filter.set_active(true).unwrap();
+        filter.set_active(false).unwrap();
     }
 }

@@ -37,26 +37,52 @@ impl GainStage {
             return Ok(());
         }
 
-        if frame_count == 1 {
-            let linear_gain = 10.0_f32.powf(target_gain_db / 20.0);
-            for sample in samples {
-                *sample *= linear_gain;
-            }
-            self.gain_db = target_gain_db;
-            return Ok(());
-        }
-
-        let denominator = (frame_count - 1) as f32;
         for (frame_index, frame) in samples.chunks_exact_mut(channels).enumerate() {
-            let progress = frame_index as f32 / denominator;
-            let gain_db = self.gain_db + (target_gain_db - self.gain_db) * progress;
-            let linear_gain = 10.0_f32.powf(gain_db / 20.0);
+            let linear_gain = self.linear_gain(frame_index, frame_count, target_gain_db);
             for sample in frame {
                 *sample *= linear_gain;
             }
         }
         self.gain_db = target_gain_db;
         Ok(())
+    }
+
+    pub fn process_planar(
+        &mut self,
+        channels: &mut [&mut [f32]],
+        target_gain_db: f32,
+    ) -> Result<(), &'static str> {
+        let Some(frame_count) = channels.first().map(|channel| channel.len()) else {
+            return Err("channel count must be positive");
+        };
+        if channels.iter().any(|channel| channel.len() != frame_count) {
+            return Err("channels must contain the same number of frames");
+        }
+        if !target_gain_db.is_finite() {
+            return Err("target gain must be finite");
+        }
+        if frame_count == 0 {
+            return Ok(());
+        }
+
+        for frame_index in 0..frame_count {
+            let linear_gain = self.linear_gain(frame_index, frame_count, target_gain_db);
+            for channel in channels.iter_mut() {
+                channel[frame_index] *= linear_gain;
+            }
+        }
+        self.gain_db = target_gain_db;
+        Ok(())
+    }
+
+    fn linear_gain(&self, frame_index: usize, frame_count: usize, target_gain_db: f32) -> f32 {
+        let gain_db = if frame_count == 1 {
+            target_gain_db
+        } else {
+            let progress = frame_index as f32 / (frame_count - 1) as f32;
+            self.gain_db + (target_gain_db - self.gain_db) * progress
+        };
+        10.0_f32.powf(gain_db / 20.0)
     }
 }
 
@@ -97,5 +123,40 @@ mod tests {
 
         assert!(stage.process_interleaved(&mut samples, 2, 0.0).is_err());
         assert_eq!(samples, [1.0, 0.5, 0.25]);
+    }
+
+    #[test]
+    fn planar_and_interleaved_layouts_apply_the_same_ramp() {
+        let mut interleaved_stage = GainStage::default();
+        let mut interleaved = [1.0, 0.5, 1.0, 0.5];
+        interleaved_stage
+            .process_interleaved(&mut interleaved, 2, -6.0206)
+            .unwrap();
+
+        let mut planar_stage = GainStage::default();
+        let mut left = [1.0, 1.0];
+        let mut right = [0.5, 0.5];
+        planar_stage
+            .process_planar(&mut [&mut left, &mut right], -6.0206)
+            .unwrap();
+
+        assert_eq!(left, [interleaved[0], interleaved[2]]);
+        assert_eq!(right, [interleaved[1], interleaved[3]]);
+        assert_eq!(planar_stage, interleaved_stage);
+    }
+
+    #[test]
+    fn rejects_mismatched_planar_channels_without_modifying_audio() {
+        let mut stage = GainStage::default();
+        let mut left = [1.0, 0.5];
+        let mut right = [0.25];
+
+        assert!(
+            stage
+                .process_planar(&mut [&mut left, &mut right], -6.0)
+                .is_err()
+        );
+        assert_eq!(left, [1.0, 0.5]);
+        assert_eq!(right, [0.25]);
     }
 }

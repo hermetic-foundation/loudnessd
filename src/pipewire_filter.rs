@@ -140,8 +140,14 @@ static FILTER_EVENTS: sys::pw_filter_events = sys::pw_filter_events {
 struct FilterCallbackData {
     ports: Vec<CallbackPort>,
     target_gain_bits: AtomicU32,
-    meter: Option<LoudnessMeter>,
+    meter: Option<MeterState>,
     latest_loudness: PublishedLoudness,
+}
+
+struct MeterState {
+    sample_rate: u32,
+    channels: Vec<Channel>,
+    meter: LoudnessMeter,
 }
 
 impl Default for FilterCallbackData {
@@ -218,7 +224,9 @@ unsafe extern "C" fn process(
         return;
     };
 
-    meter_source(data, sample_count);
+    let sample_rate =
+        process_sample_rate(position, data.meter.as_ref().map(|meter| meter.sample_rate));
+    meter_source(data, sample_count, sample_rate);
 
     let target_gain_db = f32::from_bits(data.target_gain_bits.load(Ordering::Relaxed));
     for output_index in 0..data.ports.len() {
@@ -242,10 +250,31 @@ unsafe extern "C" fn process(
     }
 }
 
-fn meter_source(data: &mut FilterCallbackData, sample_count: u32) {
+fn process_sample_rate(
+    position: &pipewire::spa::sys::spa_io_position,
+    fallback: Option<u32>,
+) -> Option<u32> {
+    let rate = position.clock.rate;
+    if rate.num == 0 || rate.denom == 0 {
+        return fallback;
+    }
+    rate.denom.checked_div(rate.num).filter(|rate| *rate > 0)
+}
+
+fn meter_source(data: &mut FilterCallbackData, sample_count: u32, sample_rate: Option<u32>) {
+    let Some(sample_rate) = sample_rate else {
+        return;
+    };
     let Some(meter) = data.meter.as_mut() else {
         return;
     };
+    if meter.sample_rate != sample_rate {
+        let Ok(rebuilt) = LoudnessMeter::new(sample_rate, &meter.channels) else {
+            return;
+        };
+        meter.sample_rate = sample_rate;
+        meter.meter = rebuilt;
+    }
     let mut channels = [&[][..]; MAX_METER_CHANNELS];
     let mut channel_count = 0;
     for port in data
@@ -273,7 +302,7 @@ fn meter_source(data: &mut FilterCallbackData, sample_count: u32) {
         return;
     }
 
-    if let Ok(Some(reading)) = meter.push_planar(&channels[..channel_count]) {
+    if let Ok(Some(reading)) = meter.meter.push_planar(&channels[..channel_count]) {
         data.latest_loudness.publish(reading.loudness_lufs);
     }
 }
@@ -502,7 +531,11 @@ impl UnconnectedFilter {
             .filter(|port| port.direction == PortDirection::Input)
             .map(|port| meter_channel(&port.channel))
             .collect();
-        self.callback_data.meter = Some(LoudnessMeter::new(sample_rate, &channels)?);
+        self.callback_data.meter = Some(MeterState {
+            sample_rate,
+            meter: LoudnessMeter::new(sample_rate, &channels)?,
+            channels,
+        });
         Ok(())
     }
 
@@ -716,6 +749,17 @@ mod tests {
                 loudness_lufs: -13.0,
             })
         );
+    }
+
+    #[test]
+    fn process_rate_uses_the_graph_clock_and_validates_the_fraction() {
+        let mut position: pipewire::spa::sys::spa_io_position = unsafe { std::mem::zeroed() };
+        position.clock.rate.num = 1;
+        position.clock.rate.denom = 44_100;
+        assert_eq!(process_sample_rate(&position, Some(48_000)), Some(44_100));
+
+        position.clock.rate.num = 0;
+        assert_eq!(process_sample_rate(&position, Some(48_000)), Some(48_000));
     }
 
     #[test]

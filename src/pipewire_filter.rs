@@ -7,9 +7,12 @@ use std::{
     os::raw::c_void,
     ptr::NonNull,
     rc::Rc,
+    sync::atomic::{AtomicU32, Ordering},
 };
 
 use pipewire::{loop_::Loop, properties::properties, sys};
+
+use crate::gain::GainStage;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FilterState {
@@ -125,15 +128,25 @@ static FILTER_EVENTS: sys::pw_filter_events = sys::pw_filter_events {
     command: None,
 };
 
-#[derive(Default)]
 struct FilterCallbackData {
     ports: Vec<CallbackPort>,
+    target_gain_bits: AtomicU32,
+}
+
+impl Default for FilterCallbackData {
+    fn default() -> Self {
+        Self {
+            ports: Vec::new(),
+            target_gain_bits: AtomicU32::new(0.0_f32.to_bits()),
+        }
+    }
 }
 
 struct CallbackPort {
     raw: NonNull<c_void>,
     direction: PortDirection,
     channel: String,
+    gain: GainStage,
 }
 
 unsafe extern "C" fn process(
@@ -155,23 +168,35 @@ unsafe extern "C" fn process(
         return;
     };
 
-    for output in data
-        .ports
-        .iter()
-        .filter(|port| port.direction == PortDirection::Output)
-    {
-        let Some(input) = data
-            .ports
-            .iter()
-            .find(|port| port.direction == PortDirection::Input && port.channel == output.channel)
-        else {
+    let target_gain_db = f32::from_bits(data.target_gain_bits.load(Ordering::Relaxed));
+    for output_index in 0..data.ports.len() {
+        if data.ports[output_index].direction != PortDirection::Output {
             continue;
-        };
-        copy_mono_port(input.raw, output.raw, sample_count);
+        }
+        let input = data.ports.iter().find_map(|port| {
+            (port.direction == PortDirection::Input
+                && port.channel == data.ports[output_index].channel)
+                .then_some(port.raw)
+        });
+        let Some(input) = input else { continue };
+        let output = &mut data.ports[output_index];
+        process_mono_port(
+            input,
+            output.raw,
+            sample_count,
+            &mut output.gain,
+            target_gain_db,
+        );
     }
 }
 
-fn copy_mono_port(input: NonNull<c_void>, output: NonNull<c_void>, sample_count: u32) {
+fn process_mono_port(
+    input: NonNull<c_void>,
+    output: NonNull<c_void>,
+    sample_count: u32,
+    gain: &mut GainStage,
+    target_gain_db: f32,
+) {
     // SAFETY: PipeWire owns both port data pointers and makes their mapped DSP
     // buffers valid for sample_count f32 samples during the process callback.
     let input =
@@ -186,11 +211,13 @@ fn copy_mono_port(input: NonNull<c_void>, output: NonNull<c_void>, sample_count:
     // samples for the duration of this process cycle.
     let input = unsafe { std::slice::from_raw_parts(input, sample_count as usize) };
     let output = unsafe { std::slice::from_raw_parts_mut(output, sample_count as usize) };
-    copy_samples(input, output);
+    process_samples(input, output, gain, target_gain_db);
 }
 
-fn copy_samples(input: &[f32], output: &mut [f32]) {
+fn process_samples(input: &[f32], output: &mut [f32], gain: &mut GainStage, target_gain_db: f32) {
     output.copy_from_slice(input);
+    let result = gain.process_interleaved(output, 1, target_gain_db);
+    debug_assert!(result.is_ok(), "validated filter gain must process");
 }
 
 fn filter_name(name: &str) -> Result<CString, FilterCreateError> {
@@ -202,6 +229,13 @@ fn raw_direction(direction: PortDirection) -> pipewire::spa::sys::spa_direction 
         PortDirection::Input => pipewire::spa::sys::SPA_DIRECTION_INPUT,
         PortDirection::Output => pipewire::spa::sys::SPA_DIRECTION_OUTPUT,
     }
+}
+
+fn target_gain_bits(target_gain_db: f32) -> Result<u32, &'static str> {
+    target_gain_db
+        .is_finite()
+        .then(|| target_gain_db.to_bits())
+        .ok_or("target gain must be finite")
 }
 
 pub struct UnconnectedFilter {
@@ -299,6 +333,7 @@ impl UnconnectedFilter {
             raw,
             direction: descriptor.direction,
             channel: descriptor.channel.clone(),
+            gain: GainStage::default(),
         });
         self.ports.push(OwnedPort {
             _raw: raw,
@@ -358,6 +393,24 @@ impl UnconnectedFilter {
 }
 
 impl ConnectedFilter {
+    pub fn set_target_gain_db(&self, target_gain_db: f32) -> Result<(), &'static str> {
+        let target_gain_bits = target_gain_bits(target_gain_db)?;
+        self.filter
+            .callback_data
+            .target_gain_bits
+            .store(target_gain_bits, Ordering::Relaxed);
+        Ok(())
+    }
+
+    pub fn target_gain_db(&self) -> f32 {
+        f32::from_bits(
+            self.filter
+                .callback_data
+                .target_gain_bits
+                .load(Ordering::Relaxed),
+        )
+    }
+
     pub fn set_active(&mut self, active: bool) -> Result<(), FilterActivationError> {
         // SAFETY: the connected filter is uniquely owned by self. PipeWire
         // synchronizes the requested state change with its processing loop.
@@ -440,13 +493,33 @@ mod tests {
     }
 
     #[test]
-    fn passthrough_preserves_every_sample() {
+    fn zero_gain_preserves_every_sample() {
         let input = [0.25, -0.5, 0.75, -1.0];
         let mut output = [0.0; 4];
+        let mut gain = GainStage::default();
 
-        copy_samples(&input, &mut output);
+        process_samples(&input, &mut output, &mut gain, 0.0);
 
         assert_eq!(output, input);
+    }
+
+    #[test]
+    fn process_callback_applies_a_smooth_target_gain() {
+        let input = [1.0; 4];
+        let mut output = [0.0; 4];
+        let mut gain = GainStage::default();
+
+        process_samples(&input, &mut output, &mut gain, -6.0206);
+
+        assert!((output[0] - 1.0).abs() < 0.0001);
+        assert!((output[3] - 0.5).abs() < 0.0001);
+    }
+
+    #[test]
+    fn rejects_non_finite_target_gain() {
+        assert!(target_gain_bits(f32::NAN).is_err());
+        assert!(target_gain_bits(f32::INFINITY).is_err());
+        assert_eq!(target_gain_bits(-6.0), Ok((-6.0_f32).to_bits()));
     }
 
     #[test]
@@ -492,6 +565,8 @@ mod tests {
             filter.state().0,
             FilterState::Connecting | FilterState::Paused
         ));
+        filter.set_target_gain_db(-6.0).unwrap();
+        assert_eq!(filter.target_gain_db(), -6.0);
         filter.set_active(true).unwrap();
         filter.set_active(false).unwrap();
     }

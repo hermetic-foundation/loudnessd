@@ -2,7 +2,13 @@
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use pipewire::{context::ContextRc, loop_::Signal, main_loop::MainLoopRc, types::ObjectType};
+use pipewire::{
+    context::ContextRc,
+    loop_::Signal,
+    main_loop::MainLoopRc,
+    registry::{Listener as RegistryListener, RegistryRc},
+    types::ObjectType,
+};
 
 use crate::SignalDomain;
 
@@ -120,6 +126,23 @@ impl GraphState {
         }
     }
 
+    pub fn remove_id(&mut self, id: u32) {
+        if let Some(stream) = self.streams.remove(&id) {
+            self.ports.retain(|_, port| port.node_id != stream.node_id);
+            self.links.retain(|_, link| {
+                link.output_node_id != stream.node_id && link.input_node_id != stream.node_id
+            });
+            return;
+        }
+        if let Some(port) = self.ports.remove(&id) {
+            self.links.retain(|_, link| {
+                link.output_port_id != port.port_id && link.input_port_id != port.port_id
+            });
+            return;
+        }
+        self.links.remove(&id);
+    }
+
     pub fn stream(&self, node_id: u32) -> Option<&DiscoveredStream> {
         self.streams.get(&node_id)
     }
@@ -141,6 +164,27 @@ impl GraphState {
             link.output_port_id == output_port_id && link.input_port_id == input_port_id
         })
     }
+}
+
+pub fn track_graph(registry: &RegistryRc) -> (Rc<RefCell<GraphState>>, RegistryListener) {
+    let state = Rc::new(RefCell::new(GraphState::default()));
+    let added_state = Rc::clone(&state);
+    let removed_state = Rc::clone(&state);
+    let listener = registry
+        .add_listener_local()
+        .global(move |global| {
+            let Some(properties) = global.props.as_ref() else {
+                return;
+            };
+            if let Some(object) =
+                discover_graph_object(&global.type_, global.id, |key| properties.get(key))
+            {
+                added_state.borrow_mut().insert(object);
+            }
+        })
+        .global_remove(move |id| removed_state.borrow_mut().remove_id(id))
+        .register();
+    (state, listener)
 }
 
 pub fn domain_for_media_class(media_class: &str) -> Option<SignalDomain> {
@@ -520,6 +564,31 @@ mod tests {
 
         assert!(state.contains_link(11, 21));
         assert!(!state.contains_link(21, 11));
+    }
+
+    #[test]
+    fn removing_a_port_id_removes_its_links() {
+        let mut state = GraphState::default();
+        state.insert(GraphObject::Port(DiscoveredPort {
+            port_id: 11,
+            node_id: 10,
+            direction: PortDirection::Output,
+            name: None,
+            channel: Some("FL".to_owned()),
+            format_dsp: None,
+        }));
+        state.insert(GraphObject::Link(DiscoveredLink {
+            link_id: 12,
+            output_node_id: 10,
+            output_port_id: 11,
+            input_node_id: 20,
+            input_port_id: 21,
+        }));
+
+        state.remove_id(11);
+
+        assert_eq!(state.ports().len(), 0);
+        assert_eq!(state.links().len(), 0);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub mod daemon;
 pub mod gain;
@@ -13,6 +13,7 @@ pub mod pipewire_links;
 pub mod pipewire_route_backend;
 pub mod route_transaction;
 pub mod routing;
+pub mod runtime_config;
 pub mod stream_control;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -132,10 +133,12 @@ pub struct ApplicationPolicy {
     pub normalize_capture: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationPolicyOverride {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub playback: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub capture: Option<bool>,
 }
 
@@ -148,7 +151,7 @@ impl ApplicationPolicyOverride {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UserConfig {
     pub defaults: ApplicationPolicyOverride,

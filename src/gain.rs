@@ -86,6 +86,53 @@ impl GainStage {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PeakLimiter {
+    threshold_linear: f32,
+    release_seconds: f32,
+    gain: f32,
+}
+
+impl PeakLimiter {
+    pub fn new(threshold_dbfs: f32, release_seconds: f32) -> Result<Self, &'static str> {
+        if !threshold_dbfs.is_finite() || threshold_dbfs > 0.0 {
+            return Err("limiter threshold must be finite and no greater than 0 dBFS");
+        }
+        if !release_seconds.is_finite() || release_seconds <= 0.0 {
+            return Err("limiter release must be finite and positive");
+        }
+        Ok(Self {
+            threshold_linear: 10.0_f32.powf(threshold_dbfs / 20.0),
+            release_seconds,
+            gain: 1.0,
+        })
+    }
+
+    pub fn gain_for_peak(&mut self, peak: f32, sample_rate: u32) -> f32 {
+        if !peak.is_finite() || sample_rate == 0 {
+            return self.gain;
+        }
+        let required = if peak > self.threshold_linear {
+            self.threshold_linear / peak
+        } else {
+            1.0
+        };
+        if required < self.gain {
+            self.gain = required;
+        } else {
+            let release = 1.0 - (-1.0 / (self.release_seconds * sample_rate as f32)).exp();
+            self.gain += (1.0 - self.gain) * release;
+        }
+        self.gain
+    }
+}
+
+impl Default for PeakLimiter {
+    fn default() -> Self {
+        Self::new(-1.0, 0.1).expect("built-in limiter settings are valid")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +205,24 @@ mod tests {
         );
         assert_eq!(left, [1.0, 0.5]);
         assert_eq!(right, [0.25]);
+    }
+
+    #[test]
+    fn limiter_catches_peaks_and_releases_smoothly() {
+        let mut limiter = PeakLimiter::new(-1.0, 0.1).unwrap();
+        let threshold = 10.0_f32.powf(-1.0 / 20.0);
+
+        let attack_gain = limiter.gain_for_peak(2.0, 48_000);
+        assert!((2.0 * attack_gain - threshold).abs() < 0.0001);
+
+        let release_gain = limiter.gain_for_peak(0.1, 48_000);
+        assert!(release_gain > attack_gain);
+        assert!(release_gain < 1.0);
+    }
+
+    #[test]
+    fn limiter_rejects_unsafe_configuration() {
+        assert!(PeakLimiter::new(1.0, 0.1).is_err());
+        assert!(PeakLimiter::new(-1.0, 0.0).is_err());
     }
 }

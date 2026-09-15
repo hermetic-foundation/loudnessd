@@ -13,7 +13,10 @@ use std::{
 use ebur128_stream::Channel;
 use pipewire::{loop_::Loop, properties::properties, sys};
 
-use crate::{gain::GainStage, meter::LoudnessMeter};
+use crate::{
+    gain::{GainStage, PeakLimiter},
+    meter::LoudnessMeter,
+};
 
 const MAX_METER_CHANNELS: usize = 64;
 
@@ -142,6 +145,7 @@ struct FilterCallbackData {
     target_gain_bits: AtomicU32,
     meter: Option<MeterState>,
     latest_loudness: PublishedLoudness,
+    limiter: PeakLimiter,
 }
 
 struct MeterState {
@@ -157,6 +161,7 @@ impl Default for FilterCallbackData {
             target_gain_bits: AtomicU32::new(0.0_f32.to_bits()),
             meter: None,
             latest_loudness: PublishedLoudness::default(),
+            limiter: PeakLimiter::default(),
         }
     }
 }
@@ -247,6 +252,44 @@ unsafe extern "C" fn process(
             &mut output.gain,
             target_gain_db,
         );
+    }
+    limit_output_ports(data, sample_count, sample_rate);
+}
+
+fn limit_output_ports(data: &mut FilterCallbackData, sample_count: u32, sample_rate: Option<u32>) {
+    let Some(sample_rate) = sample_rate else {
+        return;
+    };
+    let mut outputs = [std::ptr::null_mut(); MAX_METER_CHANNELS];
+    let mut output_count = 0;
+    for port in data
+        .ports
+        .iter()
+        .filter(|port| port.direction == PortDirection::Output)
+    {
+        if output_count == MAX_METER_CHANNELS {
+            return;
+        }
+        // PipeWire owns this buffer for the duration of the process callback.
+        let samples =
+            unsafe { sys::pw_filter_get_dsp_buffer(port.raw.as_ptr(), sample_count) }.cast::<f32>();
+        if samples.is_null() {
+            return;
+        }
+        outputs[output_count] = samples;
+        output_count += 1;
+    }
+    for sample_index in 0..sample_count as usize {
+        let peak = outputs[..output_count]
+            .iter()
+            // Every pointer was validated above for a buffer of sample_count samples.
+            .map(|output| unsafe { *output.add(sample_index) }.abs())
+            .fold(0.0_f32, f32::max);
+        let limiter_gain = data.limiter.gain_for_peak(peak, sample_rate);
+        for output in &outputs[..output_count] {
+            // Every pointer was validated above for a buffer of sample_count samples.
+            unsafe { *output.add(sample_index) *= limiter_gain };
+        }
     }
 }
 

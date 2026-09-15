@@ -2,10 +2,10 @@
 
 ## Current status
 
-`loudnessd` is experimental. The current daemon observes PipeWire stream
-lifecycle events but does not process or reroute audio yet. It also provides a
-read-only stream listing and a dry-run controller interface for development and
-testing.
+`loudnessd` is experimental. The daemon normalizes each application stream
+independently through transient PipeWire filters. Playback and capture have
+separate policy and controller state. A final linked-channel peak guard prevents
+normalization gain from clipping without replacing perceived-loudness control.
 
 ## Installation
 
@@ -66,6 +66,38 @@ systemctl --user status loudnessd
 journalctl --user -u loudnessd
 ```
 
+The daemon owns only transient PipeWire nodes and links. A clean stop restores
+direct routes before removing its filters. If a device move supersedes a route,
+the daemon releases the old filter and reconnects to the new route.
+
+## Runtime control
+
+The service exposes a private per-user socket under `$XDG_RUNTIME_DIR`. Inspect
+or temporarily change the running policy with:
+
+```console
+loudnessd msg status
+loudnessd msg disable
+loudnessd msg enable
+loudnessd msg reload
+loudnessd msg set application-a playback off
+loudnessd msg set application-a capture on
+loudnessd msg reset application-a
+```
+
+`disable` bypasses every active stream but leaves the daemon available.
+`reload` rereads the original `--config` path. `set` and `reset` are in-memory
+overlays and disappear when the daemon restarts.
+
+Export the baseline plus runtime overlays as deterministic TOML:
+
+```console
+loudnessd msg export > loudnessd.toml
+```
+
+Export never modifies the active baseline. Persist the result explicitly as a
+standalone config file or translate it into NixOS module settings.
+
 ## Inspecting streams
 
 List application playback and capture streams without changing the PipeWire
@@ -110,9 +142,9 @@ playback = false
 capture = true
 ```
 
-An omitted direction inherits from `[defaults]`. Application matching keys and
-precedence remain provisional until broader PipeWire metadata testing is
-complete.
+An omitted direction inherits from `[defaults]`. Matching prefers PipeWire's
+`application.id`, then process binary, then application name. Streams without
+those properties receive a node-scoped fallback identity.
 
 For a standalone installation, starting `loudnessd --daemon` without
 `--config` uses `$XDG_CONFIG_HOME/loudnessd/config.toml`, falling back to
@@ -123,3 +155,12 @@ file. Stream listing and dry-run modes do not create configuration files.
 Supplying `--config PATH` makes that file authoritative and read-only from
 loudnessd's perspective. This is how the NixOS module passes either its
 generated Nix-store configuration or `services.loudnessd.configFile`.
+
+## Limitations
+
+- Only application streams with unambiguous, channel-labelled routes are
+  normalized; unsupported topology is left untouched.
+- Application metadata varies between native, Wine, and Proton software, so
+  inspect `--list-streams` before relying on a per-application override.
+- The current release supports PipeWire's negotiated planar floating-point DSP
+  buffers. The filter follows the graph sample rate at runtime.

@@ -64,6 +64,10 @@ impl RecoveryJournal {
     }
 }
 
+pub fn path_for_socket(socket_path: &Path) -> PathBuf {
+    socket_path.with_file_name("loudnessd-routes.toml")
+}
+
 fn temporary_path(path: &Path) -> PathBuf {
     path.with_extension(format!("tmp-{}", std::process::id()))
 }

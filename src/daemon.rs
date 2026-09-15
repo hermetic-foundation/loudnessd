@@ -24,6 +24,7 @@ use crate::{
     pipewire_filter::{ConnectedFilter, PortDirection, UnconnectedFilter},
     pipewire_links::OwnedLinks,
     pipewire_route_backend::PipewireRouteBackend,
+    recovery::{RecoveryJournal, path_for_socket},
     route_transaction::{ActiveRoute, bypass, install},
     routing::{RouteHealth, RoutePlanError, plan_route, route_health},
     runtime_config::RuntimeConfig,
@@ -56,6 +57,7 @@ struct Daemon {
     managed: HashMap<u32, ManagedStream>,
     unsupported: HashSet<u32>,
     retained_direct_links: Vec<OwnedLinks>,
+    recovery_journal: RecoveryJournal,
     config_path: PathBuf,
     runtime_config: RuntimeConfig,
     enabled: bool,
@@ -152,6 +154,7 @@ impl Daemon {
     }
 
     fn remove_disappeared_streams(&mut self) {
+        let previous_count = self.managed.len();
         let present: HashSet<_> = self
             .graph
             .borrow()
@@ -160,6 +163,114 @@ impl Daemon {
             .collect();
         self.managed.retain(|node_id, _| present.contains(node_id));
         self.unsupported.retain(|node_id| present.contains(node_id));
+        if self.managed.len() != previous_count {
+            self.sync_recovery_journal(None);
+        }
+    }
+
+    fn direct_specs(
+        &self,
+        extra: Option<&crate::routing::RoutePlan>,
+    ) -> Vec<crate::routing::LinkSpec> {
+        let mut specs: Vec<_> = self
+            .managed
+            .values()
+            .filter_map(|managed| match managed {
+                ManagedStream::Active { route, .. } => Some(route.plan()),
+                ManagedStream::Connecting { .. } => None,
+            })
+            .chain(extra)
+            .flat_map(|plan| plan.channels.iter().map(|channel| channel.original))
+            .collect();
+        specs.sort_by_key(|spec| (spec.output.port_id, spec.input.port_id));
+        specs.dedup();
+        specs
+    }
+
+    fn sync_recovery_journal(&self, extra: Option<&crate::routing::RoutePlan>) -> bool {
+        match self.recovery_journal.replace(&self.direct_specs(extra)) {
+            Ok(()) => true,
+            Err(error) => {
+                eprintln!("loudnessd: cannot update route recovery journal: {error}");
+                false
+            }
+        }
+    }
+
+    fn recover_prior_routes(&mut self) {
+        let specs = match self.recovery_journal.load() {
+            Ok(specs) => specs,
+            Err(error) => {
+                eprintln!("loudnessd: cannot read route recovery journal: {error}");
+                return;
+            }
+        };
+        if specs.is_empty() {
+            return;
+        }
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !recovery_endpoints_present(&self.graph.borrow(), &specs)
+            && std::time::Instant::now() < deadline
+        {
+            self.main_loop
+                .loop_()
+                .iterate(Timeout::Finite(Duration::from_millis(20)));
+        }
+        if !recovery_endpoints_present(&self.graph.borrow(), &specs) {
+            eprintln!("loudnessd: prior route endpoints disappeared; discarding recovery journal");
+            let _ = self.recovery_journal.replace(&[]);
+            return;
+        }
+
+        let missing: Vec<_> = specs
+            .iter()
+            .copied()
+            .filter(|spec| {
+                !self
+                    .graph
+                    .borrow()
+                    .contains_link(spec.output.port_id, spec.input.port_id)
+            })
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        match OwnedLinks::create_lingering(&self.core, &missing) {
+            Ok(links) => {
+                let deadline = std::time::Instant::now() + Duration::from_secs(2);
+                while !missing.iter().all(|spec| {
+                    self.graph
+                        .borrow()
+                        .contains_link(spec.output.port_id, spec.input.port_id)
+                }) && std::time::Instant::now() < deadline
+                {
+                    self.main_loop
+                        .loop_()
+                        .iterate(Timeout::Finite(Duration::from_millis(20)));
+                }
+                if missing.iter().all(|spec| {
+                    self.graph
+                        .borrow()
+                        .contains_link(spec.output.port_id, spec.input.port_id)
+                }) {
+                    eprintln!(
+                        "loudnessd: restored {} direct links after an unclean exit",
+                        missing.len()
+                    );
+                    drop(links);
+                } else {
+                    eprintln!("loudnessd: timed out restoring direct links after an unclean exit");
+                    for id in links.ids() {
+                        let _ = self.registry.destroy_global(id).into_result();
+                    }
+                    links.destroy();
+                }
+            }
+            Err(error) => {
+                eprintln!("loudnessd: cannot restore routes after an unclean exit: {error}")
+            }
+        }
     }
 
     fn reconcile_routes(&mut self) {
@@ -190,6 +301,7 @@ impl Daemon {
             self.unsupported.remove(&node_id);
             if health == RouteHealth::Superseded {
                 eprintln!("loudnessd: stream {node_id} route changed; reconnecting");
+                self.sync_recovery_journal(None);
                 continue;
             }
 
@@ -211,6 +323,7 @@ impl Daemon {
                     stream.node_id, error.transition.operation, error.transition.error
                 ),
             }
+            self.sync_recovery_journal(None);
         }
     }
 
@@ -375,6 +488,10 @@ impl Daemon {
                     continue;
                 }
             };
+            if !self.sync_recovery_journal(Some(&plan)) {
+                self.unsupported.insert(node_id);
+                continue;
+            }
             let mut backend = PipewireRouteBackend::new(
                 &self.main_loop,
                 &self.core,
@@ -406,6 +523,7 @@ impl Daemon {
                         error.operation, error.error
                     );
                     self.unsupported.insert(node_id);
+                    self.sync_recovery_journal(None);
                 }
             }
         }
@@ -457,7 +575,22 @@ impl Daemon {
                 ),
             }
         }
+        let _ = self.recovery_journal.replace(&[]);
     }
+}
+
+fn recovery_endpoints_present(graph: &GraphState, specs: &[crate::routing::LinkSpec]) -> bool {
+    specs.iter().all(|spec| {
+        graph.contains_port(
+            spec.output.node_id,
+            spec.output.port_id,
+            GraphPortDirection::Output,
+        ) && graph.contains_port(
+            spec.input.node_id,
+            spec.input.port_id,
+            GraphPortDirection::Input,
+        )
+    })
 }
 
 fn parse_domain(value: &str) -> Result<SignalDomain, String> {
@@ -504,6 +637,7 @@ pub fn run(
     let core = context.connect_rc(None)?;
     let registry = core.get_registry_rc()?;
     let (graph, _registry_listener) = track_graph(&registry);
+    let recovery_journal = RecoveryJournal::new(path_for_socket(&socket_path));
     let control_server = ControlServer::bind(socket_path)?;
     let terminated = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(SIGINT, Arc::clone(&terminated))?;
@@ -517,10 +651,13 @@ pub fn run(
         managed: HashMap::new(),
         unsupported: HashSet::new(),
         retained_direct_links: Vec::new(),
+        recovery_journal,
         config_path,
         runtime_config: RuntimeConfig::new(baseline),
         enabled: true,
     };
+
+    daemon.recover_prior_routes();
 
     eprintln!("loudnessd: monitoring and normalizing PipeWire application streams");
     while !terminated.load(Ordering::Relaxed) {

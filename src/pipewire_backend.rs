@@ -168,6 +168,12 @@ impl GraphState {
     pub fn contains_link_id(&self, link_id: u32) -> bool {
         self.links.contains_key(&link_id)
     }
+
+    pub fn contains_port(&self, node_id: u32, port_id: u32, direction: PortDirection) -> bool {
+        self.ports
+            .get(&port_id)
+            .is_some_and(|port| port.node_id == node_id && port.direction == direction)
+    }
 }
 
 pub fn track_graph(registry: &RegistryRc) -> (Rc<RefCell<GraphState>>, RegistryListener) {

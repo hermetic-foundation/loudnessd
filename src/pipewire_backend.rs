@@ -164,6 +164,10 @@ impl GraphState {
             link.output_port_id == output_port_id && link.input_port_id == input_port_id
         })
     }
+
+    pub fn contains_link_id(&self, link_id: u32) -> bool {
+        self.links.contains_key(&link_id)
+    }
 }
 
 pub fn track_graph(registry: &RegistryRc) -> (Rc<RefCell<GraphState>>, RegistryListener) {

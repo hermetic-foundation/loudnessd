@@ -9,6 +9,7 @@ pub mod meter;
 pub mod pipewire_backend;
 pub mod pipewire_filter;
 pub mod pipewire_links;
+pub mod pipewire_route_backend;
 pub mod route_transaction;
 pub mod routing;
 pub mod stream_control;

@@ -4,6 +4,7 @@ use std::{
     ffi::{CStr, CString},
     fmt,
     marker::PhantomData,
+    os::raw::c_void,
     ptr::NonNull,
     rc::Rc,
 };
@@ -98,10 +99,78 @@ static FILTER_EVENTS: sys::pw_filter_events = sys::pw_filter_events {
     param_changed: None,
     add_buffer: None,
     remove_buffer: None,
-    process: None,
+    process: Some(process),
     drained: None,
     command: None,
 };
+
+#[derive(Default)]
+struct FilterCallbackData {
+    ports: Vec<CallbackPort>,
+}
+
+struct CallbackPort {
+    raw: NonNull<c_void>,
+    direction: PortDirection,
+    channel: String,
+}
+
+unsafe extern "C" fn process(
+    data: *mut c_void,
+    position: *mut pipewire::spa::sys::spa_io_position,
+) {
+    // SAFETY: PipeWire invokes this callback with the data pointer supplied to
+    // pw_filter_new_simple and a position valid for this process cycle.
+    let (data, position) = unsafe {
+        (
+            data.cast::<FilterCallbackData>().as_mut(),
+            position.as_ref(),
+        )
+    };
+    let (Some(data), Some(position)) = (data, position) else {
+        return;
+    };
+    let Ok(sample_count) = u32::try_from(position.clock.duration) else {
+        return;
+    };
+
+    for output in data
+        .ports
+        .iter()
+        .filter(|port| port.direction == PortDirection::Output)
+    {
+        let Some(input) = data
+            .ports
+            .iter()
+            .find(|port| port.direction == PortDirection::Input && port.channel == output.channel)
+        else {
+            continue;
+        };
+        copy_mono_port(input.raw, output.raw, sample_count);
+    }
+}
+
+fn copy_mono_port(input: NonNull<c_void>, output: NonNull<c_void>, sample_count: u32) {
+    // SAFETY: PipeWire owns both port data pointers and makes their mapped DSP
+    // buffers valid for sample_count f32 samples during the process callback.
+    let input =
+        unsafe { sys::pw_filter_get_dsp_buffer(input.as_ptr(), sample_count) }.cast::<f32>();
+    let output =
+        unsafe { sys::pw_filter_get_dsp_buffer(output.as_ptr(), sample_count) }.cast::<f32>();
+    if input.is_null() || output.is_null() {
+        return;
+    }
+
+    // SAFETY: Both PipeWire port buffers are valid for sample_count f32
+    // samples for the duration of this process cycle.
+    let input = unsafe { std::slice::from_raw_parts(input, sample_count as usize) };
+    let output = unsafe { std::slice::from_raw_parts_mut(output, sample_count as usize) };
+    copy_samples(input, output);
+}
+
+fn copy_samples(input: &[f32], output: &mut [f32]) {
+    output.copy_from_slice(input);
+}
 
 fn filter_name(name: &str) -> Result<CString, FilterCreateError> {
     CString::new(name).map_err(|_| FilterCreateError::NameContainsNul)
@@ -117,6 +186,7 @@ fn raw_direction(direction: PortDirection) -> pipewire::spa::sys::spa_direction 
 pub struct UnconnectedFilter {
     raw: NonNull<sys::pw_filter>,
     ports: Vec<OwnedPort>,
+    callback_data: Box<FilterCallbackData>,
     _main_thread_only: PhantomData<Rc<()>>,
 }
 
@@ -125,7 +195,7 @@ pub struct ConnectedFilter {
 }
 
 struct OwnedPort {
-    _raw: NonNull<std::ffi::c_void>,
+    _raw: NonNull<c_void>,
     descriptor: PortDescriptor,
 }
 
@@ -137,6 +207,7 @@ struct PortData {
 impl UnconnectedFilter {
     pub fn new(loop_: &Loop, name: &str) -> Result<Self, FilterCreateError> {
         let name = filter_name(name)?;
+        let mut callback_data = Box::<FilterCallbackData>::default();
         let properties = properties! {
             "media.type" => "Audio",
             "media.category" => "Filter",
@@ -147,20 +218,22 @@ impl UnconnectedFilter {
 
         // SAFETY: The loop and static event table outlive the returned filter.
         // pw_filter_new_simple takes ownership of properties. No callback data is
-        // supplied, and the handle remains confined to the main-loop thread.
+        // supplied callback data has a stable heap address and outlives raw.
+        // The handle remains confined to the main-loop thread.
         let raw = unsafe {
             sys::pw_filter_new_simple(
                 loop_.as_raw_ptr(),
                 name.as_ptr(),
                 properties.into_raw(),
                 &FILTER_EVENTS,
-                std::ptr::null_mut(),
+                (&mut *callback_data as *mut FilterCallbackData).cast(),
             )
         };
         let raw = NonNull::new(raw).ok_or(FilterCreateError::CreationFailed)?;
         Ok(Self {
             raw,
             ports: Vec::new(),
+            callback_data,
             _main_thread_only: PhantomData,
         })
     }
@@ -201,6 +274,11 @@ impl UnconnectedFilter {
             )
         };
         let raw = NonNull::new(raw).ok_or(PortCreateError::CreationFailed)?;
+        self.callback_data.ports.push(CallbackPort {
+            raw,
+            direction: descriptor.direction,
+            channel: descriptor.channel.clone(),
+        });
         self.ports.push(OwnedPort {
             _raw: raw,
             descriptor,
@@ -286,7 +364,8 @@ impl FilterState {
 
 impl Drop for UnconnectedFilter {
     fn drop(&mut self) {
-        // SAFETY: self uniquely owns raw, and no callback data can outlive it.
+        // SAFETY: self uniquely owns raw. PipeWire stops callbacks before
+        // returning, and callback_data remains alive until after this method.
         unsafe { sys::pw_filter_destroy(self.raw.as_ptr()) };
     }
 }
@@ -326,6 +405,16 @@ mod tests {
             raw_direction(PortDirection::Output),
             pipewire::spa::sys::SPA_DIRECTION_OUTPUT
         );
+    }
+
+    #[test]
+    fn passthrough_preserves_every_sample() {
+        let input = [0.25, -0.5, 0.75, -1.0];
+        let mut output = [0.0; 4];
+
+        copy_samples(&input, &mut output);
+
+        assert_eq!(output, input);
     }
 
     #[test]

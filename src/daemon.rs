@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use std::{
-    cell::Cell,
     collections::{HashMap, HashSet},
     error::Error,
     path::PathBuf,
     rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
-use pipewire::{
-    context::ContextRc,
-    loop_::{Signal, Timeout},
-    main_loop::MainLoopRc,
-};
+use pipewire::{context::ContextRc, loop_::Timeout, main_loop::MainLoopRc};
+use signal_hook::consts::signal::{SIGINT, SIGTERM};
 
 use crate::{
     ControllerBank, SignalDomain, UserConfig,
@@ -505,15 +505,9 @@ pub fn run(
     let registry = core.get_registry_rc()?;
     let (graph, _registry_listener) = track_graph(&registry);
     let control_server = ControlServer::bind(socket_path)?;
-    let running = Rc::new(Cell::new(true));
-    let signal_running = Rc::clone(&running);
-    let _sig_int = main_loop
-        .loop_()
-        .add_signal_local(Signal::INT, move || signal_running.set(false));
-    let signal_running = Rc::clone(&running);
-    let _sig_term = main_loop
-        .loop_()
-        .add_signal_local(Signal::TERM, move || signal_running.set(false));
+    let terminated = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(SIGINT, Arc::clone(&terminated))?;
+    signal_hook::flag::register(SIGTERM, Arc::clone(&terminated))?;
     let mut daemon = Daemon {
         main_loop: main_loop.clone(),
         core,
@@ -529,7 +523,7 @@ pub fn run(
     };
 
     eprintln!("loudnessd: monitoring and normalizing PipeWire application streams");
-    while running.get() {
+    while !terminated.load(Ordering::Relaxed) {
         main_loop.loop_().iterate(Timeout::Finite(CONTROL_INTERVAL));
         daemon.tick();
         daemon.process_requests(&control_server);

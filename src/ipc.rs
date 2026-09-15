@@ -8,9 +8,11 @@ use std::{
         net::{UnixListener, UnixStream},
     },
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 pub const SOCKET_NAME: &str = "loudnessd.sock";
+const REQUEST_TIMEOUT: Duration = Duration::from_millis(250);
 
 pub fn default_socket_path() -> Result<PathBuf, &'static str> {
     std::env::var_os("XDG_RUNTIME_DIR")
@@ -59,6 +61,7 @@ impl ControlServer {
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(None),
             Err(error) => return Err(error),
         };
+        stream.set_read_timeout(Some(REQUEST_TIMEOUT))?;
         let mut request = String::new();
         stream.read_to_string(&mut request)?;
         Ok(Some((stream, request)))
@@ -122,5 +125,21 @@ mod tests {
             ControlServer::bind(&path).err().unwrap().kind(),
             io::ErrorKind::AddrInUse
         );
+    }
+
+    #[test]
+    fn incomplete_client_cannot_block_indefinitely() {
+        let path = socket_path();
+        let server = ControlServer::bind(&path).unwrap();
+        let _client = UnixStream::connect(&path).unwrap();
+        let started = std::time::Instant::now();
+
+        let error = server.accept_request().unwrap_err();
+
+        assert!(matches!(
+            error.kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        ));
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 }

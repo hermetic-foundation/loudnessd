@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     SignalDomain,
-    pipewire_backend::{DiscoveredLink, DiscoveredPort, PortDirection},
+    pipewire_backend::{DiscoveredLink, DiscoveredPort, GraphState, PortDirection},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -55,6 +55,13 @@ pub struct RouteTeardown {
     pub remove_owned_links: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RouteHealth {
+    Healthy,
+    Superseded,
+    Broken,
+}
+
 impl RoutePlan {
     pub fn insertion(&self) -> RouteTransition {
         RouteTransition {
@@ -81,6 +88,28 @@ impl RoutePlan {
             deactivate_filter: true,
             remove_owned_links: true,
         }
+    }
+}
+
+pub fn route_health(plan: &RoutePlan, graph: &GraphState) -> RouteHealth {
+    let replacements = plan.insertion().stage;
+    if replacements
+        .iter()
+        .all(|spec| graph.contains_link(spec.output.port_id, spec.input.port_id))
+    {
+        return RouteHealth::Healthy;
+    }
+
+    let has_new_direct_route = graph.links().any(|link| {
+        link.output_node_id != plan.filter_node_id
+            && link.input_node_id != plan.filter_node_id
+            && (link.output_node_id == plan.stream_node_id
+                || link.input_node_id == plan.stream_node_id)
+    });
+    if has_new_direct_route {
+        RouteHealth::Superseded
+    } else {
+        RouteHealth::Broken
     }
 }
 
@@ -273,6 +302,14 @@ mod tests {
         }
     }
 
+    fn graph_with(objects: impl IntoIterator<Item = DiscoveredLink>) -> GraphState {
+        let mut graph = GraphState::default();
+        for link in objects {
+            graph.insert(crate::pipewire_backend::GraphObject::Link(link));
+        }
+        graph
+    }
+
     #[test]
     fn plans_playback_between_application_and_sink() {
         let ports = [
@@ -316,6 +353,58 @@ mod tests {
                     port_id: 21
                 },
             }
+        );
+    }
+
+    #[test]
+    fn reports_route_health_from_live_link_topology() {
+        let plan = RoutePlan {
+            stream_node_id: 10,
+            filter_node_id: 30,
+            channels: vec![ChannelRoute {
+                channel: "FL".to_owned(),
+                original_link_id: 40,
+                original: LinkSpec {
+                    output: LinkEndpoint {
+                        node_id: 10,
+                        port_id: 11,
+                    },
+                    input: LinkEndpoint {
+                        node_id: 20,
+                        port_id: 21,
+                    },
+                },
+                into_filter: LinkSpec {
+                    output: LinkEndpoint {
+                        node_id: 10,
+                        port_id: 11,
+                    },
+                    input: LinkEndpoint {
+                        node_id: 30,
+                        port_id: 31,
+                    },
+                },
+                out_of_filter: LinkSpec {
+                    output: LinkEndpoint {
+                        node_id: 30,
+                        port_id: 32,
+                    },
+                    input: LinkEndpoint {
+                        node_id: 20,
+                        port_id: 21,
+                    },
+                },
+            }],
+        };
+        let healthy = graph_with([link(41, 10, 11, 30, 31), link(42, 30, 32, 20, 21)]);
+        assert_eq!(route_health(&plan, &healthy), RouteHealth::Healthy);
+
+        let superseded = graph_with([link(43, 10, 11, 50, 51)]);
+        assert_eq!(route_health(&plan, &superseded), RouteHealth::Superseded);
+
+        assert_eq!(
+            route_health(&plan, &GraphState::default()),
+            RouteHealth::Broken
         );
     }
 

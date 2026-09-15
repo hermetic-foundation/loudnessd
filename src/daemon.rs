@@ -25,7 +25,7 @@ use crate::{
     pipewire_links::OwnedLinks,
     pipewire_route_backend::PipewireRouteBackend,
     route_transaction::{ActiveRoute, bypass, install},
-    routing::{RoutePlanError, plan_route},
+    routing::{RouteHealth, RoutePlanError, plan_route, route_health},
     runtime_config::RuntimeConfig,
     stream_control::StreamControl,
 };
@@ -64,6 +64,7 @@ struct Daemon {
 impl Daemon {
     fn tick(&mut self) {
         self.remove_disappeared_streams();
+        self.reconcile_routes();
         self.discover_streams();
         self.connect_pending_filters();
         self.update_controls();
@@ -159,6 +160,58 @@ impl Daemon {
             .collect();
         self.managed.retain(|node_id, _| present.contains(node_id));
         self.unsupported.retain(|node_id| present.contains(node_id));
+    }
+
+    fn reconcile_routes(&mut self) {
+        let unhealthy: Vec<_> = {
+            let graph = self.graph.borrow();
+            self.managed
+                .iter()
+                .filter_map(|(node_id, managed)| {
+                    let ManagedStream::Active { route, .. } = managed else {
+                        return None;
+                    };
+                    let health = route_health(route.plan(), &graph);
+                    (health != RouteHealth::Healthy).then_some((*node_id, health))
+                })
+                .collect()
+        };
+
+        for (node_id, health) in unhealthy {
+            let Some(ManagedStream::Active {
+                stream,
+                mut filter,
+                route,
+                ..
+            }) = self.managed.remove(&node_id)
+            else {
+                continue;
+            };
+            self.unsupported.remove(&node_id);
+            if health == RouteHealth::Superseded {
+                eprintln!("loudnessd: stream {node_id} route changed; reconnecting");
+                continue;
+            }
+
+            let mut backend = PipewireRouteBackend::new(
+                &self.main_loop,
+                &self.core,
+                &self.registry,
+                Rc::clone(&self.graph),
+                &mut filter,
+                &mut self.retained_direct_links,
+            );
+            match bypass(&mut backend, route) {
+                Ok(bypassed) => {
+                    self.retained_direct_links.push(bypassed.direct_links);
+                    eprintln!("loudnessd: recovered broken route for stream {node_id}");
+                }
+                Err(error) => eprintln!(
+                    "loudnessd: broken route recovery failed for stream {} at {:?}: {}",
+                    stream.node_id, error.transition.operation, error.transition.error
+                ),
+            }
+        }
     }
 
     fn discover_streams(&mut self) {

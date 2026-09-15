@@ -7,7 +7,7 @@ use std::{
     os::raw::c_void,
     ptr::NonNull,
     rc::Rc,
-    sync::atomic::{AtomicBool, AtomicU32, Ordering},
+    sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
 
 use ebur128_stream::Channel;
@@ -44,6 +44,12 @@ pub struct PortDescriptor {
     pub direction: PortDirection,
     pub name: String,
     pub channel: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MeterSnapshot {
+    pub sequence: u64,
+    pub loudness_lufs: f32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -135,8 +141,7 @@ struct FilterCallbackData {
     ports: Vec<CallbackPort>,
     target_gain_bits: AtomicU32,
     meter: Option<LoudnessMeter>,
-    latest_loudness_bits: AtomicU32,
-    has_loudness: AtomicBool,
+    latest_loudness: PublishedLoudness,
 }
 
 impl Default for FilterCallbackData {
@@ -145,8 +150,7 @@ impl Default for FilterCallbackData {
             ports: Vec::new(),
             target_gain_bits: AtomicU32::new(0.0_f32.to_bits()),
             meter: None,
-            latest_loudness_bits: AtomicU32::new(0),
-            has_loudness: AtomicBool::new(false),
+            latest_loudness: PublishedLoudness::default(),
         }
     }
 }
@@ -156,6 +160,43 @@ struct CallbackPort {
     direction: PortDirection,
     channel: String,
     gain: GainStage,
+}
+
+#[derive(Default)]
+struct PublishedLoudness {
+    version: AtomicU64,
+    loudness_bits: AtomicU32,
+}
+
+impl PublishedLoudness {
+    fn publish(&self, loudness_lufs: f32) {
+        let version = self.version.fetch_add(1, Ordering::AcqRel);
+        debug_assert_eq!(version % 2, 0, "the process callback is a single writer");
+        self.loudness_bits
+            .store(loudness_lufs.to_bits(), Ordering::Relaxed);
+        self.version.store(version + 2, Ordering::Release);
+    }
+
+    fn read(&self) -> Option<MeterSnapshot> {
+        loop {
+            let before = self.version.load(Ordering::Acquire);
+            if before == 0 {
+                return None;
+            }
+            if !before.is_multiple_of(2) {
+                std::hint::spin_loop();
+                continue;
+            }
+            let loudness_lufs = f32::from_bits(self.loudness_bits.load(Ordering::Relaxed));
+            let after = self.version.load(Ordering::Acquire);
+            if before == after {
+                return Some(MeterSnapshot {
+                    sequence: before / 2,
+                    loudness_lufs,
+                });
+            }
+        }
+    }
 }
 
 unsafe extern "C" fn process(
@@ -233,9 +274,7 @@ fn meter_source(data: &mut FilterCallbackData, sample_count: u32) {
     }
 
     if let Ok(Some(reading)) = meter.push_planar(&channels[..channel_count]) {
-        data.latest_loudness_bits
-            .store(reading.loudness_lufs.to_bits(), Ordering::Relaxed);
-        data.has_loudness.store(true, Ordering::Release);
+        data.latest_loudness.publish(reading.loudness_lufs);
     }
 }
 
@@ -484,19 +523,8 @@ impl ConnectedFilter {
         )
     }
 
-    pub fn latest_loudness_lufs(&self) -> Option<f32> {
-        self.filter
-            .callback_data
-            .has_loudness
-            .load(Ordering::Acquire)
-            .then(|| {
-                f32::from_bits(
-                    self.filter
-                        .callback_data
-                        .latest_loudness_bits
-                        .load(Ordering::Relaxed),
-                )
-            })
+    pub fn latest_meter_snapshot(&self) -> Option<MeterSnapshot> {
+        self.filter.callback_data.latest_loudness.read()
     }
 
     pub fn set_active(&mut self, active: bool) -> Result<(), FilterActivationError> {
@@ -620,6 +648,30 @@ mod tests {
     }
 
     #[test]
+    fn meter_snapshots_are_sequenced() {
+        let published = PublishedLoudness::default();
+        assert_eq!(published.read(), None);
+
+        published.publish(-18.5);
+        assert_eq!(
+            published.read(),
+            Some(MeterSnapshot {
+                sequence: 1,
+                loudness_lufs: -18.5,
+            })
+        );
+
+        published.publish(-13.0);
+        assert_eq!(
+            published.read(),
+            Some(MeterSnapshot {
+                sequence: 2,
+                loudness_lufs: -13.0,
+            })
+        );
+    }
+
+    #[test]
     #[ignore = "requires a live PipeWire user session"]
     fn live_unconnected_filter_owns_ports_without_registering_a_node() {
         let main_loop = pipewire::main_loop::MainLoopRc::new(None).unwrap();
@@ -665,7 +717,7 @@ mod tests {
         ));
         filter.set_target_gain_db(-6.0).unwrap();
         assert_eq!(filter.target_gain_db(), -6.0);
-        assert_eq!(filter.latest_loudness_lufs(), None);
+        assert_eq!(filter.latest_meter_snapshot(), None);
         filter.set_active(true).unwrap();
         filter.set_active(false).unwrap();
     }

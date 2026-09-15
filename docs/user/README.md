@@ -113,3 +113,13 @@ capture = true
 An omitted direction inherits from `[defaults]`. Application matching keys and
 precedence remain provisional until broader PipeWire metadata testing is
 complete.
+
+For a standalone installation, starting `loudnessd --daemon` without
+`--config` uses `$XDG_CONFIG_HOME/loudnessd/config.toml`, falling back to
+`$HOME/.config/loudnessd/config.toml`. The daemon creates a generic starter
+configuration there when the file is absent and never overwrites an existing
+file. Stream listing and dry-run modes do not create configuration files.
+
+Supplying `--config PATH` makes that file authoritative and read-only from
+loudnessd's perspective. This is how the NixOS module passes either its
+generated Nix-store configuration or `services.loudnessd.configFile`.

@@ -45,6 +45,9 @@ pub enum PortCreateError {
     CreationFailed,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FilterConnectError(i32);
+
 impl fmt::Display for FilterCreateError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -68,6 +71,24 @@ impl fmt::Display for PortCreateError {
 }
 
 impl std::error::Error for PortCreateError {}
+
+impl FilterConnectError {
+    pub fn raw_code(self) -> i32 {
+        self.0
+    }
+}
+
+impl fmt::Display for FilterConnectError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "PipeWire failed to connect the filter (error {})",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for FilterConnectError {}
 
 static FILTER_EVENTS: sys::pw_filter_events = sys::pw_filter_events {
     version: sys::PW_VERSION_FILTER_EVENTS,
@@ -97,6 +118,10 @@ pub struct UnconnectedFilter {
     raw: NonNull<sys::pw_filter>,
     ports: Vec<OwnedPort>,
     _main_thread_only: PhantomData<Rc<()>>,
+}
+
+pub struct ConnectedFilter {
+    filter: UnconnectedFilter,
 }
 
 struct OwnedPort {
@@ -212,6 +237,38 @@ impl UnconnectedFilter {
         };
         (FilterState::from_raw(state), error)
     }
+
+    pub fn connect_inactive(self) -> Result<ConnectedFilter, FilterConnectError> {
+        // SAFETY: raw is an unconnected filter owned by self. No parameters
+        // are supplied, and INACTIVE prevents processing until explicitly
+        // enabled by a later processing implementation.
+        let result = unsafe {
+            sys::pw_filter_connect(
+                self.raw.as_ptr(),
+                sys::pw_filter_flags_PW_FILTER_FLAG_INACTIVE,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if result < 0 {
+            return Err(FilterConnectError(result));
+        }
+        Ok(ConnectedFilter { filter: self })
+    }
+}
+
+impl ConnectedFilter {
+    pub fn node_id(&self) -> Option<u32> {
+        self.filter.node_id()
+    }
+
+    pub fn state(&self) -> (FilterState, Option<String>) {
+        self.filter.state()
+    }
+
+    pub fn ports(&self) -> impl ExactSizeIterator<Item = &PortDescriptor> {
+        self.filter.ports()
+    }
 }
 
 impl FilterState {
@@ -236,6 +293,10 @@ impl Drop for UnconnectedFilter {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
+    use pipewire::loop_::Timeout;
+
     use super::*;
 
     #[test]
@@ -282,5 +343,33 @@ mod tests {
         assert_eq!(filter.state().0, FilterState::Unconnected);
         assert_eq!(filter.ports().len(), 2);
         assert_eq!(filter.node_id(), None);
+    }
+
+    #[test]
+    #[ignore = "requires a live PipeWire user session"]
+    fn live_filter_registers_an_inactive_node() {
+        let main_loop = pipewire::main_loop::MainLoopRc::new(None).unwrap();
+        let mut filter = UnconnectedFilter::new(main_loop.loop_(), "loudnessd-test").unwrap();
+        filter
+            .add_mono_port(PortDirection::Input, "input_FL", "FL")
+            .unwrap();
+        filter
+            .add_mono_port(PortDirection::Output, "output_FL", "FL")
+            .unwrap();
+        let filter = filter.connect_inactive().unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while filter.node_id().is_none() && Instant::now() < deadline {
+            main_loop
+                .loop_()
+                .iterate(Timeout::Finite(Duration::from_millis(20)));
+        }
+
+        assert!(filter.node_id().is_some());
+        assert_eq!(filter.ports().len(), 2);
+        assert!(matches!(
+            filter.state().0,
+            FilterState::Connecting | FilterState::Paused
+        ));
     }
 }

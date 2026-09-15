@@ -13,7 +13,13 @@ use loudnessd::{
 
 fn usage() {
     eprintln!(
-        "loudnessd [--config PATH] [--daemon | --list-streams]\n\nDaemon mode without --config uses $XDG_CONFIG_HOME/loudnessd/config.toml.\n\nDry-run protocol on stdin: DOMAIN APPLICATION_ID STREAM_ID LUFS ELAPSED_MILLISECONDS\nDOMAIN is playback or capture"
+        "loudnessd [--config PATH] [--daemon | --list-streams]\n\n\
+         loudnessd msg status|reload|enable|disable|export\n\
+         loudnessd msg set APP playback|capture on|off\n\
+         loudnessd msg reset APP\n\n\
+         Daemon mode without --config uses $XDG_CONFIG_HOME/loudnessd/config.toml.\n\n\
+         Dry-run protocol on stdin: DOMAIN APPLICATION_ID STREAM_ID LUFS ELAPSED_MILLISECONDS\n\
+         DOMAIN is playback or capture"
     );
 }
 

@@ -42,6 +42,42 @@ The last requirement follows from the retired prototype: it wrote a 200%
 Chromium stream volume through `pactl`, and WirePlumber restored that broad
 application-level value onto later Chromium streams.
 
+## Configuration and runtime control
+
+The daemon receives its baseline configuration through `--config PATH` and
+never rewrites that file. The NixOS module normally generates the file in the
+Nix store, but can pass an externally managed file through
+`services.loudnessd.configFile`.
+
+The generated TOML is a separate host-configuration derivation, not part of
+the application package. This keeps the `loudnessd` binary identical and
+cacheable across machines while allowing each NixOS system closure to carry
+its own policy.
+
+Planned runtime control uses a per-user Unix socket and a `loudnessd msg`
+client, following the command pattern used by compositors such as Niri.
+Runtime changes are overlays held in daemon memory. They disappear on restart
+unless the user exports the merged effective configuration with
+`loudnessd msg export` and deliberately persists it. Export writes TOML to
+standard output; it does not mutate the baseline configuration.
+
+The initial command contract includes status, reload, enable, disable, setting
+or resetting one application's directional policy, and exporting effective
+configuration. `reload` rereads the original `--config` path.
+
+## Graph ownership and cleanup
+
+Every processing node and link will be owned by the daemon's PipeWire
+connection and will not be persistent. Disabling or stopping processing first
+bypasses each affected stream back to its original route, then removes the
+daemon-owned links and nodes. Disconnecting the client provides a final cleanup
+boundary, including after a crash.
+
+`loudnessd msg disable` will perform the same ordered bypass and teardown while
+leaving the daemon available for inspection and later re-enablement. Processing
+must fail open: an internal error restores the original route rather than
+interrupting application audio.
+
 ## Playback calibration
 
 The initial playback target was calibrated from the official YouTube upload of
@@ -73,4 +109,3 @@ effective_lufs = target_lufs + 20 * log10(g)
 | 10% | -20.00 dB | -33.00 LUFS |
 | 15% | -16.48 dB | -29.48 LUFS |
 | 20% | -13.98 dB | -26.98 LUFS |
-

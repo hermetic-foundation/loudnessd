@@ -1,13 +1,10 @@
 # loudnessd
 
 `loudnessd` is an experimental per-application perceived-loudness normalizer
-for PipeWire. It is currently developed inside this flake, but the Rust crate,
-Nix package, example configuration, and documentation are self-contained so
-they can move to a dedicated repository later.
+for PipeWire, written in Rust and packaged as a standalone Nix flake.
 
-The current milestone is read-only and dry-run only. It can inspect PipeWire
-streams and exercise the controller, but it does not modify the audio graph.
+The current daemon milestone is read-only. It observes PipeWire stream events
+and exercises the controller, but does not modify the audio graph yet.
 
 - [User documentation](docs/user/README.md)
 - [Developer documentation](docs/dev/README.md)
-

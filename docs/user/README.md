@@ -2,9 +2,10 @@
 
 ## Current status
 
-`loudnessd` is experimental. The current binary does not process audio or run
-as a service. It provides a read-only PipeWire stream listing and a dry-run
-controller interface for development and testing.
+`loudnessd` is experimental. The current daemon observes PipeWire stream
+lifecycle events but does not process or reroute audio yet. It also provides a
+read-only stream listing and a dry-run controller interface for development and
+testing.
 
 ## Installation
 
@@ -27,15 +28,43 @@ To install it through NixOS, add the flake input and module:
     nixosConfigurations.example = nixpkgs.lib.nixosSystem {
       modules = [
         loudnessd.nixosModules.default
-        { programs.loudnessd.enable = true; }
+        {
+          services.loudnessd = {
+            enable = true;
+            settings.defaults = {
+              playback = true;
+              capture = true;
+            };
+          };
+        }
       ];
     };
   };
 }
 ```
 
-The module currently installs the dry-run tool only. It will gain daemon
-options when the native PipeWire processing backend is ready for user testing.
+The module generates an immutable TOML configuration in the Nix store and
+starts `loudnessd` as a systemd user service after PipeWire. It does not write
+configuration under the user's home directory.
+
+An existing TOML file can be used instead of generated settings:
+
+```nix
+services.loudnessd = {
+  enable = true;
+  configFile = ./loudnessd.toml;
+};
+```
+
+When `configFile` is set, it is authoritative and `settings` are not used to
+generate the service configuration.
+
+Inspect the service with:
+
+```console
+systemctl --user status loudnessd
+journalctl --user -u loudnessd
+```
 
 ## Inspecting streams
 

@@ -1,0 +1,21 @@
+[package]
+name = "loudnessd"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+description = "Per-application perceived-loudness controller for PipeWire"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "loudnessd"
+path = "src/main.rs"
+
+[profile.release]
+lto = "thin"
+strip = true

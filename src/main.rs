@@ -4,22 +4,24 @@ use std::io::{self, BufRead};
 
 use loudnessd::{
     ControllerBank, Decision, Observation, SignalDomain, UserConfig,
-    pipewire_backend::snapshot_streams,
+    pipewire_backend::{RegistryEvent, monitor_streams, snapshot_streams},
 };
 
 fn usage() {
     eprintln!(
-        "loudnessd [--config PATH] [--list-streams]\n\nDry-run protocol on stdin: DOMAIN APPLICATION_ID STREAM_ID LUFS ELAPSED_MILLISECONDS\nDOMAIN is playback or capture"
+        "loudnessd [--config PATH] [--daemon | --list-streams]\n\nDry-run protocol on stdin: DOMAIN APPLICATION_ID STREAM_ID LUFS ELAPSED_MILLISECONDS\nDOMAIN is playback or capture"
     );
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut config_path = None;
+    let mut daemon = false;
     let mut list_streams = false;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--config" => config_path = Some(arguments.next().ok_or("--config needs a path")?),
+            "--daemon" => daemon = true,
             "--list-streams" => list_streams = true,
             "--help" | "-h" => {
                 usage();
@@ -27,6 +29,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             unknown => return Err(format!("unknown argument: {unknown}").into()),
         }
+    }
+
+    if daemon && list_streams {
+        return Err("--daemon and --list-streams are mutually exclusive".into());
+    }
+
+    let mut controllers = ControllerBank::defaults();
+    if let Some(path) = config_path {
+        let source = std::fs::read_to_string(path)?;
+        controllers.apply_user_config(UserConfig::from_toml(&source)?);
     }
 
     if list_streams {
@@ -47,10 +59,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let mut controllers = ControllerBank::defaults();
-    if let Some(path) = config_path {
-        let source = std::fs::read_to_string(path)?;
-        controllers.apply_user_config(UserConfig::from_toml(&source)?);
+    if daemon {
+        eprintln!("loudnessd: read-only daemon; no audio graph changes will be made");
+        monitor_streams(|event| {
+            let (action, stream) = match event {
+                RegistryEvent::Added(stream) => ("added", stream),
+                RegistryEvent::Removed(stream) => ("removed", stream),
+            };
+            eprintln!(
+                "stream {action}: {} {} {}",
+                match stream.domain {
+                    SignalDomain::Playback => "playback",
+                    SignalDomain::Capture => "capture",
+                },
+                stream.node_id,
+                stream.application_name.as_deref().unwrap_or("unknown"),
+            );
+        })?;
+        return Ok(());
     }
     eprintln!("loudnessd: dry-run controller; no audio graph changes will be made");
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use pipewire::{core::CoreRc, link::Link, properties::PropertiesBox};
+use pipewire::{core::CoreRc, link::Link, properties::PropertiesBox, proxy::ProxyT};
 
 use crate::routing::LinkSpec;
 
@@ -10,11 +10,23 @@ pub struct OwnedLinks {
 
 impl OwnedLinks {
     pub fn create(core: &CoreRc, specs: &[LinkSpec]) -> Result<Self, pipewire::Error> {
+        Self::create_with_linger(core, specs, false)
+    }
+
+    pub fn create_lingering(core: &CoreRc, specs: &[LinkSpec]) -> Result<Self, pipewire::Error> {
+        Self::create_with_linger(core, specs, true)
+    }
+
+    fn create_with_linger(
+        core: &CoreRc,
+        specs: &[LinkSpec],
+        linger: bool,
+    ) -> Result<Self, pipewire::Error> {
         let mut owned = Self {
             links: Vec::with_capacity(specs.len()),
         };
         for spec in specs {
-            let properties = link_properties(*spec);
+            let properties = link_properties(*spec, linger);
             match core.create_object::<Link>("link-factory", &properties) {
                 Ok(link) => owned.links.push(link),
                 Err(error) => {
@@ -24,6 +36,10 @@ impl OwnedLinks {
             }
         }
         Ok(owned)
+    }
+
+    pub fn ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.links.iter().map(|link| link.upcast_ref().id())
     }
 
     pub fn len(&self) -> usize {
@@ -52,7 +68,7 @@ impl Drop for OwnedLinks {
     }
 }
 
-fn link_properties(spec: LinkSpec) -> PropertiesBox {
+fn link_properties(spec: LinkSpec, linger: bool) -> PropertiesBox {
     let output_node = spec.output.node_id.to_string();
     let output_port = spec.output.port_id.to_string();
     let input_node = spec.input.node_id.to_string();
@@ -62,7 +78,7 @@ fn link_properties(spec: LinkSpec) -> PropertiesBox {
         "link.output.port" => output_port,
         "link.input.node" => input_node,
         "link.input.port" => input_port,
-        "object.linger" => "false",
+        "object.linger" => if linger { "true" } else { "false" },
     }
 }
 
@@ -117,13 +133,16 @@ mod tests {
 
     #[test]
     fn link_properties_are_explicit_and_non_persistent() {
-        let properties = link_properties(spec());
+        let properties = link_properties(spec(), false);
 
         assert_eq!(properties.get("link.output.node"), Some("10"));
         assert_eq!(properties.get("link.output.port"), Some("11"));
         assert_eq!(properties.get("link.input.node"), Some("20"));
         assert_eq!(properties.get("link.input.port"), Some("21"));
         assert_eq!(properties.get("object.linger"), Some("false"));
+
+        let restored = link_properties(spec(), true);
+        assert_eq!(restored.get("object.linger"), Some("true"));
     }
 
     #[test]

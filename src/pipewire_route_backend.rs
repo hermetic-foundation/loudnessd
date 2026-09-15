@@ -115,8 +115,20 @@ impl<'a> PipewireRouteBackend<'a> {
     }
 
     fn create_confirmed(&self, specs: &[LinkSpec]) -> Result<OwnedLinks, PipewireRouteError> {
-        let links = OwnedLinks::create(self.core, specs)
-            .map_err(|error| PipewireRouteError::Create(error.to_string()))?;
+        self.create_confirmed_with(specs, false)
+    }
+
+    fn create_confirmed_with(
+        &self,
+        specs: &[LinkSpec],
+        linger: bool,
+    ) -> Result<OwnedLinks, PipewireRouteError> {
+        let links = if linger {
+            OwnedLinks::create_lingering(self.core, specs)
+        } else {
+            OwnedLinks::create(self.core, specs)
+        }
+        .map_err(|error| PipewireRouteError::Create(error.to_string()))?;
         if self.links_present(specs) {
             Ok(links)
         } else {
@@ -138,7 +150,7 @@ impl<'a> PipewireRouteBackend<'a> {
             return Ok(());
         }
         let restored = self
-            .create_confirmed(&missing)
+            .create_confirmed_with(&missing, true)
             .map_err(|error| PipewireRouteError::Restore(error.to_string()))?;
         self.retained_direct_links.push(restored);
         Ok(())
@@ -151,6 +163,10 @@ impl RouteBackend for PipewireRouteBackend<'_> {
 
     fn create_links(&mut self, specs: &[LinkSpec]) -> Result<Self::LinkSet, Self::Error> {
         self.create_confirmed(specs)
+    }
+
+    fn create_direct_links(&mut self, specs: &[LinkSpec]) -> Result<Self::LinkSet, Self::Error> {
+        self.create_confirmed_with(specs, true)
     }
 
     fn remove_originals(&mut self, links: &[OriginalLink]) -> Result<(), Self::Error> {
@@ -171,7 +187,7 @@ impl RouteBackend for PipewireRouteBackend<'_> {
 
     fn restore_originals(&mut self, specs: &[LinkSpec]) -> Result<(), Self::Error> {
         let restored = self
-            .create_confirmed(specs)
+            .create_confirmed_with(specs, true)
             .map_err(|error| PipewireRouteError::Restore(error.to_string()))?;
         self.retained_direct_links.push(restored);
         Ok(())
@@ -190,6 +206,9 @@ impl RouteBackend for PipewireRouteBackend<'_> {
     }
 
     fn destroy_links(&mut self, links: Self::LinkSet) {
+        for id in links.ids() {
+            let _ = self.registry.destroy_global(id).into_result();
+        }
         links.destroy();
     }
 }

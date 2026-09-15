@@ -10,6 +10,9 @@ pub trait RouteBackend {
     /// created links may remain.
     fn create_links(&mut self, specs: &[LinkSpec]) -> Result<Self::LinkSet, Self::Error>;
 
+    /// Restore direct routes that survive this client's clean disconnection.
+    fn create_direct_links(&mut self, specs: &[LinkSpec]) -> Result<Self::LinkSet, Self::Error>;
+
     /// Remove all original links. On error, any links already removed by this
     /// call must be restored before returning.
     fn remove_originals(&mut self, links: &[OriginalLink]) -> Result<(), Self::Error>;
@@ -109,7 +112,7 @@ pub fn bypass<B: RouteBackend<LinkSet = L>, L>(
     route: ActiveRoute<L>,
 ) -> Result<BypassedRoute<L>, BypassError<L, B::Error>> {
     let teardown = route.plan.teardown();
-    let direct_links = match backend.create_links(&teardown.restore) {
+    let direct_links = match backend.create_direct_links(&teardown.restore) {
         Ok(links) => links,
         Err(error) => {
             return Err(BypassError {
@@ -176,6 +179,13 @@ mod tests {
             } else {
                 Ok(self.creates)
             }
+        }
+
+        fn create_direct_links(
+            &mut self,
+            _specs: &[LinkSpec],
+        ) -> Result<Self::LinkSet, Self::Error> {
+            self.create_links(&[])
         }
 
         fn remove_originals(&mut self, _links: &[OriginalLink]) -> Result<(), Self::Error> {

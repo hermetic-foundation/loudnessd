@@ -45,6 +45,24 @@
             ];
           };
           service = moduleConfiguration.config.systemd.user.services.loudnessd;
+          externalConfig = pkgs.writeText "loudnessd-external.toml" ''
+            [defaults]
+            playback = false
+            capture = true
+          '';
+          externalModuleConfiguration = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                services.loudnessd = {
+                  enable = true;
+                  configFile = externalConfig;
+                };
+              }
+            ];
+          };
+          externalService = externalModuleConfiguration.config.systemd.user.services.loudnessd;
         in
         {
           package = self.packages.${system}.default;
@@ -54,12 +72,16 @@
             pkgs.runCommand "loudnessd-module-check"
               {
                 execStart = service.serviceConfig.ExecStart;
+                externalExecStart = externalService.serviceConfig.ExecStart;
               }
               ''
                 generatedConfig="''${execStart##*--config }"
                 grep -Fq '[defaults]' "$generatedConfig"
                 grep -Fq 'playback = true' "$generatedConfig"
                 grep -Fq 'capture = false' "$generatedConfig"
+                externalConfig="''${externalExecStart##*--config }"
+                grep -Fq 'playback = false' "$externalConfig"
+                grep -Fq 'capture = true' "$externalConfig"
                 touch $out
               '';
         }

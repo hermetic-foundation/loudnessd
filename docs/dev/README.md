@@ -104,7 +104,9 @@ tests exercise registry discovery, filter registration, transient link cleanup,
 and install/bypass transactions against a running PipeWire session using only
 disposable nodes. A live two-channel sample-flow test through a disposable null
 sink also verified runtime disable, clean bypass, forced process termination,
-journal restoration on restart, and resumed normalization.
+journal restoration on restart, and resumed normalization. A separate
+two-channel capture test linked only the null sink's monitor ports to a
+discarding client and verified capture filter insertion and clean bypass.
 
 The Nix flake checks the Rust package and evaluates the NixOS module, including
 its generated immutable TOML and graphical-session user unit. Before a stable

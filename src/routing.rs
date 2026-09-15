@@ -2,18 +2,20 @@
 
 use std::collections::{HashMap, HashSet};
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     SignalDomain,
     pipewire_backend::{DiscoveredLink, DiscoveredPort, GraphState, PortDirection},
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LinkEndpoint {
     pub node_id: u32,
     pub port_id: u32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LinkSpec {
     pub output: LinkEndpoint,
     pub input: LinkEndpoint,

@@ -21,22 +21,31 @@ must never compensate for master output gain: changing master volume should
 preserve stream balance while applying the system volume curve to the complete
 mix.
 
-## Planned PipeWire backend
+## PipeWire backend
 
-The production backend will use native PipeWire nodes rather than recording
-streams through PulseAudio compatibility APIs. Each application stream will be
-routed through an inline EBU R128 meter and gain stage. Capture uses a separate
-graph and controller. Clipping protection belongs in loudnessd's own gain
-control rather than an external effects pipeline.
+The daemon uses native PipeWire filters rather than recording monitor streams
+through PulseAudio compatibility APIs. One shared PipeWire core owns registry
+tracking, transient links, and per-stream filters. Each filter measures its
+pre-gain signal, applies a smoothly changing normalization gain, and finishes
+with a linked-channel `-1 dBFS` peak guard. The guard has immediate attack and
+a smooth release, preserving stereo balance.
 
-The daemon must remain disabled until integration tests establish that it:
+Route installation is transactional: create and confirm replacement links,
+remove the original direct links, then activate the filter. Failure restores
+the direct route and releases replacement links. Shutdown performs the inverse
+order. Active routes are reconciled against registry changes so device moves
+and relinks do not leave stale filters in the graph.
+
+The implementation and tests enforce that it:
 
 - never links playback control to capture or monitor sources;
 - keeps every stream control loop independent;
-- preserves Wine and Proton streams as nodes appear and disappear;
 - bypasses cleanly without interrupting playback;
-- restores no stale gain when a stream identity is reused;
 - never writes controller gain into WirePlumber's persistent stream volume.
+
+Wine and Proton expose ordinary PipeWire application streams, but their
+identity metadata is not consistent enough to treat process names as stable
+keys. Live Wine/Proton behavior remains a release-validation requirement.
 
 The last requirement follows from the retired prototype: it wrote a 200%
 Chromium stream volume through `pactl`, and WirePlumber restored that broad
@@ -54,29 +63,44 @@ the application package. This keeps the `loudnessd` binary identical and
 cacheable across machines while allowing each NixOS system closure to carry
 its own policy.
 
-Planned runtime control uses a per-user Unix socket and a `loudnessd msg`
+Runtime control uses a mode-`0600` per-user Unix socket and a `loudnessd msg`
 client, following the command pattern used by compositors such as Niri.
 Runtime changes are overlays held in daemon memory. They disappear on restart
 unless the user exports the merged effective configuration with
 `loudnessd msg export` and deliberately persists it. Export writes TOML to
 standard output; it does not mutate the baseline configuration.
 
-The initial command contract includes status, reload, enable, disable, setting
-or resetting one application's directional policy, and exporting effective
-configuration. `reload` rereads the original `--config` path.
+The command contract includes status, reload, enable, disable, setting or
+resetting one application's directional policy, and exporting effective
+configuration. `reload` rereads the original `--config` path. Requests have a
+bounded read time so an incomplete client cannot stall the control loop.
 
 ## Graph ownership and cleanup
 
-Every processing node and link will be owned by the daemon's PipeWire
+Every processing node and link is owned by the daemon's PipeWire
 connection and will not be persistent. Disabling or stopping processing first
 bypasses each affected stream back to its original route, then removes the
 daemon-owned links and nodes. Disconnecting the client provides a final cleanup
 boundary, including after a crash.
 
-`loudnessd msg disable` will perform the same ordered bypass and teardown while
+`loudnessd msg disable` performs the same ordered bypass and teardown while
 leaving the daemon available for inspection and later re-enablement. Processing
 must fail open: an internal error restores the original route rather than
 interrupting application audio.
+
+## Validation
+
+Pure tests cover loudness windows, controller convergence, channel-independent
+policy, gain continuity, peak limiting, route planning, transaction rollback,
+runtime overlays, deterministic export, and socket ownership. Ignored live
+tests exercise registry discovery, filter registration, transient link cleanup,
+and install/bypass transactions against a running PipeWire session using only
+disposable nodes.
+
+The Nix flake checks the Rust package and evaluates the NixOS module, including
+its generated immutable TOML and graphical-session user unit. Before a stable
+release, validation still needs sustained listening tests, forced daemon crash
+recovery, and active Wine/Proton playback and capture coverage.
 
 ## Playback calibration
 

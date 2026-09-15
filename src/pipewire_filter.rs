@@ -7,12 +7,15 @@ use std::{
     os::raw::c_void,
     ptr::NonNull,
     rc::Rc,
-    sync::atomic::{AtomicU32, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
+use ebur128_stream::Channel;
 use pipewire::{loop_::Loop, properties::properties, sys};
 
-use crate::gain::GainStage;
+use crate::{gain::GainStage, meter::LoudnessMeter};
+
+const MAX_METER_CHANNELS: usize = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FilterState {
@@ -131,6 +134,9 @@ static FILTER_EVENTS: sys::pw_filter_events = sys::pw_filter_events {
 struct FilterCallbackData {
     ports: Vec<CallbackPort>,
     target_gain_bits: AtomicU32,
+    meter: Option<LoudnessMeter>,
+    latest_loudness_bits: AtomicU32,
+    has_loudness: AtomicBool,
 }
 
 impl Default for FilterCallbackData {
@@ -138,6 +144,9 @@ impl Default for FilterCallbackData {
         Self {
             ports: Vec::new(),
             target_gain_bits: AtomicU32::new(0.0_f32.to_bits()),
+            meter: None,
+            latest_loudness_bits: AtomicU32::new(0),
+            has_loudness: AtomicBool::new(false),
         }
     }
 }
@@ -168,6 +177,8 @@ unsafe extern "C" fn process(
         return;
     };
 
+    meter_source(data, sample_count);
+
     let target_gain_db = f32::from_bits(data.target_gain_bits.load(Ordering::Relaxed));
     for output_index in 0..data.ports.len() {
         if data.ports[output_index].direction != PortDirection::Output {
@@ -187,6 +198,44 @@ unsafe extern "C" fn process(
             &mut output.gain,
             target_gain_db,
         );
+    }
+}
+
+fn meter_source(data: &mut FilterCallbackData, sample_count: u32) {
+    let Some(meter) = data.meter.as_mut() else {
+        return;
+    };
+    let mut channels = [&[][..]; MAX_METER_CHANNELS];
+    let mut channel_count = 0;
+    for port in data
+        .ports
+        .iter()
+        .filter(|port| port.direction == PortDirection::Input)
+    {
+        if channel_count == MAX_METER_CHANNELS {
+            return;
+        }
+        // SAFETY: PipeWire keeps the mapped input valid for sample_count f32
+        // samples for the duration of this process callback.
+        let samples =
+            unsafe { sys::pw_filter_get_dsp_buffer(port.raw.as_ptr(), sample_count) }.cast::<f32>();
+        if samples.is_null() {
+            return;
+        }
+        // SAFETY: The pointer and length follow from the PipeWire DSP buffer
+        // contract above, and the slice does not escape this callback.
+        channels[channel_count] =
+            unsafe { std::slice::from_raw_parts(samples, sample_count as usize) };
+        channel_count += 1;
+    }
+    if channel_count == 0 {
+        return;
+    }
+
+    if let Ok(Some(reading)) = meter.push_planar(&channels[..channel_count]) {
+        data.latest_loudness_bits
+            .store(reading.loudness_lufs.to_bits(), Ordering::Relaxed);
+        data.has_loudness.store(true, Ordering::Release);
     }
 }
 
@@ -228,6 +277,18 @@ fn raw_direction(direction: PortDirection) -> pipewire::spa::sys::spa_direction 
     match direction {
         PortDirection::Input => pipewire::spa::sys::SPA_DIRECTION_INPUT,
         PortDirection::Output => pipewire::spa::sys::SPA_DIRECTION_OUTPUT,
+    }
+}
+
+fn meter_channel(channel: &str) -> Channel {
+    match channel {
+        "FL" => Channel::Left,
+        "FR" => Channel::Right,
+        "FC" => Channel::Center,
+        "LFE" => Channel::Lfe,
+        "SL" | "RL" => Channel::LeftSurround,
+        "SR" | "RR" => Channel::RightSurround,
+        _ => Channel::Other,
     }
 }
 
@@ -350,6 +411,18 @@ impl UnconnectedFilter {
         self.ports.iter().map(|port| &port.descriptor)
     }
 
+    pub fn enable_meter(&mut self, sample_rate: u32) -> Result<(), ebur128_stream::Error> {
+        let channels: Vec<_> = self
+            .callback_data
+            .ports
+            .iter()
+            .filter(|port| port.direction == PortDirection::Input)
+            .map(|port| meter_channel(&port.channel))
+            .collect();
+        self.callback_data.meter = Some(LoudnessMeter::new(sample_rate, &channels)?);
+        Ok(())
+    }
+
     pub fn node_id(&self) -> Option<u32> {
         // SAFETY: raw is owned by self and stays valid until Drop.
         let node_id = unsafe { sys::pw_filter_get_node_id(self.raw.as_ptr()) };
@@ -409,6 +482,21 @@ impl ConnectedFilter {
                 .target_gain_bits
                 .load(Ordering::Relaxed),
         )
+    }
+
+    pub fn latest_loudness_lufs(&self) -> Option<f32> {
+        self.filter
+            .callback_data
+            .has_loudness
+            .load(Ordering::Acquire)
+            .then(|| {
+                f32::from_bits(
+                    self.filter
+                        .callback_data
+                        .latest_loudness_bits
+                        .load(Ordering::Relaxed),
+                )
+            })
     }
 
     pub fn set_active(&mut self, active: bool) -> Result<(), FilterActivationError> {
@@ -493,6 +581,15 @@ mod tests {
     }
 
     #[test]
+    fn maps_pipewire_channels_to_ebu_weights() {
+        assert_eq!(meter_channel("FL"), Channel::Left);
+        assert_eq!(meter_channel("FR"), Channel::Right);
+        assert_eq!(meter_channel("LFE"), Channel::Lfe);
+        assert_eq!(meter_channel("RL"), Channel::LeftSurround);
+        assert_eq!(meter_channel("unknown"), Channel::Other);
+    }
+
+    #[test]
     fn zero_gain_preserves_every_sample() {
         let input = [0.25, -0.5, 0.75, -1.0];
         let mut output = [0.0; 4];
@@ -550,6 +647,7 @@ mod tests {
         filter
             .add_mono_port(PortDirection::Output, "output_FL", "FL")
             .unwrap();
+        filter.enable_meter(48_000).unwrap();
         let mut filter = filter.connect_inactive().unwrap();
 
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -567,6 +665,7 @@ mod tests {
         ));
         filter.set_target_gain_db(-6.0).unwrap();
         assert_eq!(filter.target_gain_db(), -6.0);
+        assert_eq!(filter.latest_loudness_lufs(), None);
         filter.set_active(true).unwrap();
         filter.set_active(false).unwrap();
     }

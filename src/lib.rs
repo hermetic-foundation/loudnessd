@@ -232,6 +232,13 @@ impl ControllerBank {
         self.policies.insert(application_id.into(), policy);
     }
 
+    pub fn policy_for(&self, application_id: &str) -> ApplicationPolicy {
+        self.policies
+            .get(application_id)
+            .copied()
+            .unwrap_or(self.default_policy)
+    }
+
     pub fn apply_user_config(&mut self, config: UserConfig) {
         self.default_policy = config.defaults.resolve(ApplicationPolicy::default());
         self.policies = config
@@ -514,6 +521,22 @@ mod tests {
         assert_eq!(
             controllers.stream(SignalDomain::Capture, "microphone"),
             None
+        );
+    }
+
+    #[test]
+    fn policy_lookup_resolves_application_and_default_settings() {
+        let mut controllers = ControllerBank::defaults();
+        let override_policy = ApplicationPolicy {
+            normalize_playback: false,
+            normalize_capture: true,
+        };
+        controllers.set_policy("recorder", override_policy);
+
+        assert_eq!(controllers.policy_for("recorder"), override_policy);
+        assert_eq!(
+            controllers.policy_for("other"),
+            ApplicationPolicy::default()
         );
     }
 

@@ -1,0 +1,17 @@
+# Directional defaults apply to applications without an explicit entry.
+[defaults]
+playback = true
+capture = true
+
+# Application identifiers are placeholders until backend metadata testing.
+[applications."application-a"]
+playback = true
+capture = false
+
+[applications."application-b"]
+playback = false
+capture = true
+
+# An omitted direction inherits its value from [defaults].
+[applications."application-c"]
+playback = true

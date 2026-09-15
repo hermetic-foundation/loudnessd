@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod daemon;
 pub mod gain;
+pub mod ipc;
 pub mod meter;
 pub mod pipewire_backend;
 pub mod pipewire_filter;

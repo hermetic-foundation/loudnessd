@@ -70,6 +70,79 @@ pub enum GraphEvent {
     Removed(GraphObject),
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct GraphState {
+    streams: HashMap<u32, DiscoveredStream>,
+    ports: HashMap<u32, DiscoveredPort>,
+    links: HashMap<u32, DiscoveredLink>,
+}
+
+impl GraphState {
+    pub fn apply(&mut self, event: GraphEvent) {
+        match event {
+            GraphEvent::Added(object) => self.insert(object),
+            GraphEvent::Removed(object) => self.remove(&object),
+        }
+    }
+
+    pub fn insert(&mut self, object: GraphObject) {
+        match object {
+            GraphObject::Stream(stream) => {
+                self.streams.insert(stream.node_id, stream);
+            }
+            GraphObject::Port(port) => {
+                self.ports.insert(port.port_id, port);
+            }
+            GraphObject::Link(link) => {
+                self.links.insert(link.link_id, link);
+            }
+        }
+    }
+
+    pub fn remove(&mut self, object: &GraphObject) {
+        match object {
+            GraphObject::Stream(stream) => {
+                self.streams.remove(&stream.node_id);
+                self.ports.retain(|_, port| port.node_id != stream.node_id);
+                self.links.retain(|_, link| {
+                    link.output_node_id != stream.node_id && link.input_node_id != stream.node_id
+                });
+            }
+            GraphObject::Port(port) => {
+                self.ports.remove(&port.port_id);
+                self.links.retain(|_, link| {
+                    link.output_port_id != port.port_id && link.input_port_id != port.port_id
+                });
+            }
+            GraphObject::Link(link) => {
+                self.links.remove(&link.link_id);
+            }
+        }
+    }
+
+    pub fn stream(&self, node_id: u32) -> Option<&DiscoveredStream> {
+        self.streams.get(&node_id)
+    }
+
+    pub fn streams(&self) -> impl ExactSizeIterator<Item = &DiscoveredStream> {
+        self.streams.values()
+    }
+
+    pub fn ports(&self) -> impl ExactSizeIterator<Item = &DiscoveredPort> {
+        self.ports.values()
+    }
+
+    pub fn links(&self) -> impl ExactSizeIterator<Item = &DiscoveredLink> {
+        self.links.values()
+    }
+
+    pub fn contains_link(&self, output_port_id: u32, input_port_id: u32) -> bool {
+        self.links.values().any(|link| {
+            link.output_port_id == output_port_id && link.input_port_id == input_port_id
+        })
+    }
+}
+
 pub fn domain_for_media_class(media_class: &str) -> Option<SignalDomain> {
     match media_class {
         "Stream/Output/Audio" => Some(SignalDomain::Playback),
@@ -395,6 +468,58 @@ mod tests {
             discover_graph_object(&ObjectType::Port, 1, |key| properties.get(key).copied()),
             None
         );
+    }
+
+    #[test]
+    fn graph_state_removes_dependent_objects_with_a_node() {
+        let stream = DiscoveredStream {
+            node_id: 10,
+            domain: SignalDomain::Playback,
+            application_id: None,
+            application_name: None,
+            process_binary: None,
+            media_name: None,
+        };
+        let port = DiscoveredPort {
+            port_id: 11,
+            node_id: 10,
+            direction: PortDirection::Output,
+            name: None,
+            channel: Some("FL".to_owned()),
+            format_dsp: None,
+        };
+        let link = DiscoveredLink {
+            link_id: 12,
+            output_node_id: 10,
+            output_port_id: 11,
+            input_node_id: 20,
+            input_port_id: 21,
+        };
+        let mut state = GraphState::default();
+        state.insert(GraphObject::Stream(stream.clone()));
+        state.insert(GraphObject::Port(port));
+        state.insert(GraphObject::Link(link));
+
+        state.apply(GraphEvent::Removed(GraphObject::Stream(stream)));
+
+        assert_eq!(state.streams().len(), 0);
+        assert_eq!(state.ports().len(), 0);
+        assert_eq!(state.links().len(), 0);
+    }
+
+    #[test]
+    fn graph_state_matches_links_by_port_endpoints() {
+        let mut state = GraphState::default();
+        state.insert(GraphObject::Link(DiscoveredLink {
+            link_id: 12,
+            output_node_id: 10,
+            output_port_id: 11,
+            input_node_id: 20,
+            input_port_id: 21,
+        }));
+
+        assert!(state.contains_link(11, 21));
+        assert!(!state.contains_link(21, 11));
     }
 
     #[test]

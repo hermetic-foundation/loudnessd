@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 pub mod meter;
+pub mod pipewire_backend;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ControllerConfig {

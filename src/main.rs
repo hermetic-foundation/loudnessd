@@ -2,26 +2,49 @@
 
 use std::io::{self, BufRead};
 
-use loudnessd::{ControllerBank, Decision, Observation, SignalDomain, UserConfig};
+use loudnessd::{
+    ControllerBank, Decision, Observation, SignalDomain, UserConfig,
+    pipewire_backend::snapshot_streams,
+};
 
 fn usage() {
     eprintln!(
-        "loudnessd [--config PATH]\n\nDry-run protocol on stdin: DOMAIN APPLICATION_ID STREAM_ID LUFS ELAPSED_MILLISECONDS\nDOMAIN is playback or capture"
+        "loudnessd [--config PATH] [--list-streams]\n\nDry-run protocol on stdin: DOMAIN APPLICATION_ID STREAM_ID LUFS ELAPSED_MILLISECONDS\nDOMAIN is playback or capture"
     );
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut config_path = None;
+    let mut list_streams = false;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--config" => config_path = Some(arguments.next().ok_or("--config needs a path")?),
+            "--list-streams" => list_streams = true,
             "--help" | "-h" => {
                 usage();
                 return Ok(());
             }
             unknown => return Err(format!("unknown argument: {unknown}").into()),
         }
+    }
+
+    if list_streams {
+        for stream in snapshot_streams()? {
+            println!(
+                "{}\t{}\t{}\t{}\t{}\t{}",
+                match stream.domain {
+                    SignalDomain::Playback => "playback",
+                    SignalDomain::Capture => "capture",
+                },
+                stream.node_id,
+                stream.application_id.as_deref().unwrap_or("-"),
+                stream.application_name.as_deref().unwrap_or("-"),
+                stream.process_binary.as_deref().unwrap_or("-"),
+                stream.media_name.as_deref().unwrap_or("-"),
+            );
+        }
+        return Ok(());
     }
 
     let mut controllers = ControllerBank::defaults();

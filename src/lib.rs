@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
+pub mod daemon;
 pub mod gain;
 pub mod meter;
 pub mod pipewire_backend;

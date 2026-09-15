@@ -7,8 +7,8 @@ use std::{
 };
 
 use loudnessd::{
-    ControllerBank, Decision, Observation, SignalDomain, UserConfig,
-    pipewire_backend::{RegistryEvent, monitor_streams, snapshot_streams},
+    ControllerBank, Decision, Observation, SignalDomain, UserConfig, daemon,
+    pipewire_backend::snapshot_streams,
 };
 
 fn usage() {
@@ -109,22 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if daemon {
-        eprintln!("loudnessd: read-only daemon; no audio graph changes will be made");
-        monitor_streams(|event| {
-            let (action, stream) = match event {
-                RegistryEvent::Added(stream) => ("added", stream),
-                RegistryEvent::Removed(stream) => ("removed", stream),
-            };
-            eprintln!(
-                "stream {action}: {} {} {}",
-                match stream.domain {
-                    SignalDomain::Playback => "playback",
-                    SignalDomain::Capture => "capture",
-                },
-                stream.node_id,
-                stream.application_name.as_deref().unwrap_or("unknown"),
-            );
-        })?;
+        daemon::run(controllers)?;
         return Ok(());
     }
     eprintln!("loudnessd: dry-run controller; no audio graph changes will be made");

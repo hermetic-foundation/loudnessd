@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::io::{self, BufRead};
+use std::{
+    fs::OpenOptions,
+    io::{self, BufRead, Write},
+    path::{Path, PathBuf},
+};
 
 use loudnessd::{
     ControllerBank, Decision, Observation, SignalDomain, UserConfig,
@@ -9,8 +13,41 @@ use loudnessd::{
 
 fn usage() {
     eprintln!(
-        "loudnessd [--config PATH] [--daemon | --list-streams]\n\nDry-run protocol on stdin: DOMAIN APPLICATION_ID STREAM_ID LUFS ELAPSED_MILLISECONDS\nDOMAIN is playback or capture"
+        "loudnessd [--config PATH] [--daemon | --list-streams]\n\nDaemon mode without --config uses $XDG_CONFIG_HOME/loudnessd/config.toml.\n\nDry-run protocol on stdin: DOMAIN APPLICATION_ID STREAM_ID LUFS ELAPSED_MILLISECONDS\nDOMAIN is playback or capture"
     );
+}
+
+const STARTER_CONFIG: &str = "\
+# Directional defaults apply to applications without an explicit entry.
+[defaults]
+playback = true
+capture = true
+";
+
+fn xdg_config_path() -> Result<PathBuf, &'static str> {
+    if let Some(path) = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from)
+        && path.is_absolute()
+    {
+        return Ok(path.join("loudnessd/config.toml"));
+    }
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|path| path.join(".config/loudnessd/config.toml"))
+        .ok_or("cannot locate the default config: HOME is unset")
+}
+
+fn create_starter_config(path: &Path) -> io::Result<bool> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(mut file) => {
+            file.write_all(STARTER_CONFIG.as_bytes())?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -34,6 +71,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if daemon && list_streams {
         return Err("--daemon and --list-streams are mutually exclusive".into());
     }
+
+    let config_path = match (config_path, daemon) {
+        (Some(path), _) => Some(PathBuf::from(path)),
+        (None, true) => {
+            let path = xdg_config_path()?;
+            if create_starter_config(&path)? {
+                eprintln!("loudnessd: created starter config at {}", path.display());
+            }
+            Some(path)
+        }
+        (None, false) => None,
+    };
 
     let mut controllers = ControllerBank::defaults();
     if let Some(path) = config_path {
@@ -123,4 +172,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    static NEXT_TEST_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
+
+    fn test_config_path() -> PathBuf {
+        std::env::temp_dir()
+            .join(format!(
+                "loudnessd-config-test-{}-{}",
+                std::process::id(),
+                NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+            ))
+            .join("loudnessd/config.toml")
+    }
+
+    #[test]
+    fn creates_a_generic_starter_config() {
+        let path = test_config_path();
+
+        assert!(create_starter_config(&path).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), STARTER_CONFIG);
+
+        std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn never_overwrites_an_existing_config() {
+        let path = test_config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "existing = true\n").unwrap();
+
+        assert!(!create_starter_config(&path).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "existing = true\n");
+
+        std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap()).unwrap();
+    }
 }

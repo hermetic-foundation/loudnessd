@@ -26,14 +26,23 @@ impl LoudnessMeter {
 
     pub fn push_interleaved(&mut self, samples: &[f32]) -> Result<Option<MeterReading>, Error> {
         self.analyzer.push_interleaved(samples)?;
+        Ok(self.reading())
+    }
+
+    pub fn push_planar(&mut self, channels: &[&[f32]]) -> Result<Option<MeterReading>, Error> {
+        self.analyzer.push_planar(channels)?;
+        Ok(self.reading())
+    }
+
+    fn reading(&mut self) -> Option<MeterReading> {
         let snapshot = self.analyzer.snapshot();
         let short_term = snapshot.short_term_lufs();
         let loudness = short_term.or_else(|| snapshot.momentary_lufs());
-        Ok(loudness.map(|loudness_lufs| MeterReading {
+        loudness.map(|loudness_lufs| MeterReading {
             loudness_lufs: loudness_lufs as f32,
             true_peak_dbtp: snapshot.true_peak_dbtp().map(|peak| peak as f32),
             using_short_term: short_term.is_some(),
-        }))
+        })
     }
 }
 
@@ -76,5 +85,24 @@ mod tests {
         assert!(actual.using_short_term);
         assert!((expected.loudness_lufs - actual.loudness_lufs).abs() < 0.001);
         assert!(expected.true_peak_dbtp.is_some());
+    }
+
+    #[test]
+    fn planar_and_interleaved_inputs_produce_the_same_reading() {
+        let interleaved = stereo_sine(48_000, 4, 0.1);
+        let left: Vec<_> = interleaved.iter().step_by(2).copied().collect();
+        let right: Vec<_> = interleaved.iter().skip(1).step_by(2).copied().collect();
+
+        let mut interleaved_meter =
+            LoudnessMeter::new(48_000, &[Channel::Left, Channel::Right]).unwrap();
+        let interleaved_reading = interleaved_meter
+            .push_interleaved(&interleaved)
+            .unwrap()
+            .unwrap();
+        let mut planar_meter =
+            LoudnessMeter::new(48_000, &[Channel::Left, Channel::Right]).unwrap();
+        let planar_reading = planar_meter.push_planar(&[&left, &right]).unwrap().unwrap();
+
+        assert_eq!(planar_reading, interleaved_reading);
     }
 }

@@ -11,7 +11,14 @@
 rustPlatform.buildRustPackage {
   pname = "loudnessd";
   version = "0.1.0";
-  src = ./.;
+  src = lib.fileset.toSource {
+    root = ./.;
+    fileset = lib.fileset.unions [
+      ./Cargo.lock
+      ./Cargo.toml
+      ./src
+    ];
+  };
   cargoLock.lockFile = ./Cargo.lock;
   nativeBuildInputs = [
     pkg-config

@@ -7,6 +7,7 @@ use serde::Deserialize;
 pub mod gain;
 pub mod meter;
 pub mod pipewire_backend;
+pub mod pipewire_filter;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ControllerConfig {

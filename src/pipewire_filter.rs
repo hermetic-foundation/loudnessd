@@ -342,6 +342,7 @@ pub struct UnconnectedFilter {
     raw: NonNull<sys::pw_filter>,
     ports: Vec<OwnedPort>,
     callback_data: Box<FilterCallbackData>,
+    listener: Option<Box<pipewire::spa::sys::spa_hook>>,
     _main_thread_only: PhantomData<Rc<()>>,
 }
 
@@ -389,6 +390,49 @@ impl UnconnectedFilter {
             raw,
             ports: Vec::new(),
             callback_data,
+            listener: None,
+            _main_thread_only: PhantomData,
+        })
+    }
+
+    pub fn new_on_core(
+        core: &pipewire::core::CoreRc,
+        name: &str,
+    ) -> Result<Self, FilterCreateError> {
+        let name = filter_name(name)?;
+        let mut callback_data = Box::<FilterCallbackData>::default();
+        let properties = properties! {
+            "media.type" => "Audio",
+            "media.category" => "Filter",
+            "media.role" => "DSP",
+            "node.autoconnect" => "false",
+            "object.linger" => "false",
+        };
+
+        // SAFETY: core remains alive independently through its Rc owner, and
+        // pw_filter_new takes ownership of the properties.
+        let raw =
+            unsafe { sys::pw_filter_new(core.as_raw_ptr(), name.as_ptr(), properties.into_raw()) };
+        let raw = NonNull::new(raw).ok_or(FilterCreateError::CreationFailed)?;
+        // The heap allocation keeps the hook address stable until Drop removes
+        // it before destroying the filter.
+        let mut listener: Box<pipewire::spa::sys::spa_hook> =
+            Box::new(unsafe { std::mem::zeroed() });
+        // SAFETY: raw is valid, listener has a stable heap address, the static
+        // event table outlives the filter, and callback_data stays boxed.
+        unsafe {
+            sys::pw_filter_add_listener(
+                raw.as_ptr(),
+                (&mut *listener as *mut pipewire::spa::sys::spa_hook).cast(),
+                &FILTER_EVENTS,
+                (&mut *callback_data as *mut FilterCallbackData).cast(),
+            );
+        }
+        Ok(Self {
+            raw,
+            ports: Vec::new(),
+            callback_data,
+            listener: Some(listener),
             _main_thread_only: PhantomData,
         })
     }
@@ -565,6 +609,9 @@ impl FilterState {
 
 impl Drop for UnconnectedFilter {
     fn drop(&mut self) {
+        if let Some(listener) = self.listener.take() {
+            pipewire::spa::utils::hook::remove(*listener);
+        }
         // SAFETY: self uniquely owns raw. PipeWire stops callbacks before
         // returning, and callback_data remains alive until after this method.
         unsafe { sys::pw_filter_destroy(self.raw.as_ptr()) };

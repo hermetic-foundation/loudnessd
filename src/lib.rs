@@ -8,6 +8,7 @@ pub mod gain;
 pub mod meter;
 pub mod pipewire_backend;
 pub mod pipewire_filter;
+pub mod stream_control;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ControllerConfig {
@@ -95,6 +96,17 @@ pub enum Decision {
     Silence { gain_db: f32 },
     Hold { gain_db: f32 },
     Adjust { previous_db: f32, gain_db: f32 },
+}
+
+impl Decision {
+    pub fn target_gain_db(self) -> f32 {
+        match self {
+            Self::Bypass => 0.0,
+            Self::Silence { gain_db } | Self::Hold { gain_db } | Self::Adjust { gain_db, .. } => {
+                gain_db
+            }
+        }
+    }
 }
 
 #[derive(Debug)]

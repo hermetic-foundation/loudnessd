@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::{ApplicationPolicyOverride, SignalDomain, UserConfig};
 
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
     baseline: UserConfig,
-    overrides: HashMap<String, ApplicationPolicyOverride>,
+    overrides: BTreeMap<String, ApplicationPolicyOverride>,
 }
 
 impl RuntimeConfig {
     pub fn new(baseline: UserConfig) -> Self {
         Self {
             baseline,
-            overrides: HashMap::new(),
+            overrides: BTreeMap::new(),
         }
     }
 
@@ -117,6 +117,19 @@ mod tests {
         assert_eq!(
             UserConfig::from_toml(&exported).unwrap(),
             config.effective()
+        );
+    }
+
+    #[test]
+    fn export_orders_application_ids_deterministically() {
+        let mut config = RuntimeConfig::new(UserConfig::default());
+        config.set("zeta", SignalDomain::Playback, false);
+        config.set("alpha", SignalDomain::Capture, false);
+
+        let exported = config.export_toml().unwrap();
+        assert!(
+            exported.find("applications.alpha").unwrap()
+                < exported.find("applications.zeta").unwrap()
         );
     }
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
@@ -156,7 +156,7 @@ impl ApplicationPolicyOverride {
 #[serde(default, deny_unknown_fields)]
 pub struct UserConfig {
     pub defaults: ApplicationPolicyOverride,
-    pub applications: HashMap<String, ApplicationPolicyOverride>,
+    pub applications: BTreeMap<String, ApplicationPolicyOverride>,
 }
 
 impl UserConfig {

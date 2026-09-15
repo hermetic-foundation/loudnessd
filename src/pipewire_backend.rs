@@ -1,17 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use pipewire::{
-    context::ContextRc,
-    loop_::Signal,
-    main_loop::MainLoopRc,
-    types::ObjectType,
-};
+use pipewire::{context::ContextRc, loop_::Signal, main_loop::MainLoopRc, types::ObjectType};
 
 use crate::SignalDomain;
 

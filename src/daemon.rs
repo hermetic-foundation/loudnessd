@@ -4,6 +4,7 @@ use std::{
     cell::Cell,
     collections::{HashMap, HashSet},
     error::Error,
+    path::PathBuf,
     rc::Rc,
     time::Duration,
 };
@@ -15,7 +16,8 @@ use pipewire::{
 };
 
 use crate::{
-    ControllerBank, SignalDomain,
+    ControllerBank, SignalDomain, UserConfig,
+    ipc::{ControlServer, write_response},
     pipewire_backend::{
         DiscoveredStream, GraphState, PortDirection as GraphPortDirection, track_graph,
     },
@@ -24,6 +26,7 @@ use crate::{
     pipewire_route_backend::PipewireRouteBackend,
     route_transaction::{ActiveRoute, bypass, install},
     routing::{RoutePlanError, plan_route},
+    runtime_config::RuntimeConfig,
     stream_control::StreamControl,
 };
 
@@ -53,6 +56,9 @@ struct Daemon {
     managed: HashMap<u32, ManagedStream>,
     unsupported: HashSet<u32>,
     retained_direct_links: Vec<OwnedLinks>,
+    config_path: PathBuf,
+    runtime_config: RuntimeConfig,
+    enabled: bool,
 }
 
 impl Daemon {
@@ -61,6 +67,87 @@ impl Daemon {
         self.discover_streams();
         self.connect_pending_filters();
         self.update_controls();
+    }
+
+    fn process_requests(&mut self, server: &ControlServer) {
+        loop {
+            let (stream, request) = match server.accept_request() {
+                Ok(Some(request)) => request,
+                Ok(None) => break,
+                Err(error) => {
+                    eprintln!("loudnessd: control socket error: {error}");
+                    break;
+                }
+            };
+            let response = match self.handle_request(request.trim()) {
+                Ok(response) => response,
+                Err(error) => format!("error: {error}\n"),
+            };
+            if let Err(error) = write_response(stream, &response) {
+                eprintln!("loudnessd: control response failed: {error}");
+            }
+        }
+    }
+
+    fn handle_request(&mut self, request: &str) -> Result<String, String> {
+        let fields: Vec<_> = request.split('\t').collect();
+        match fields.as_slice() {
+            ["status"] => {
+                let active = self
+                    .managed
+                    .values()
+                    .filter(|stream| matches!(stream, ManagedStream::Active { .. }))
+                    .count();
+                Ok(format!(
+                    "enabled={} managed={} active={}\n",
+                    self.enabled,
+                    self.managed.len(),
+                    active
+                ))
+            }
+            ["reload"] => {
+                let source = std::fs::read_to_string(&self.config_path)
+                    .map_err(|error| error.to_string())?;
+                let baseline = UserConfig::from_toml(&source).map_err(|error| error.to_string())?;
+                self.runtime_config.replace_baseline(baseline);
+                self.reconfigure();
+                Ok("ok\n".to_owned())
+            }
+            ["enable"] => {
+                self.enabled = true;
+                self.unsupported.clear();
+                Ok("ok\n".to_owned())
+            }
+            ["disable"] => {
+                self.enabled = false;
+                self.bypass_all();
+                Ok("ok\n".to_owned())
+            }
+            ["set", application_id, domain, enabled] => {
+                let domain = parse_domain(domain)?;
+                let enabled = parse_enabled(enabled)?;
+                self.runtime_config.set(*application_id, domain, enabled);
+                self.reconfigure();
+                Ok("ok\n".to_owned())
+            }
+            ["reset", application_id] => {
+                self.runtime_config.reset(application_id);
+                self.reconfigure();
+                Ok("ok\n".to_owned())
+            }
+            ["export"] => self
+                .runtime_config
+                .export_toml()
+                .map_err(|error| error.to_string()),
+            _ => Err("usage: loudnessd msg status|reload|enable|disable|set APP playback|capture on|off|reset APP|export".to_owned()),
+        }
+    }
+
+    fn reconfigure(&mut self) {
+        self.bypass_all();
+        self.controllers
+            .apply_user_config(self.runtime_config.effective());
+        self.unsupported.clear();
     }
 
     fn remove_disappeared_streams(&mut self) {
@@ -75,6 +162,9 @@ impl Daemon {
     }
 
     fn discover_streams(&mut self) {
+        if !self.enabled {
+            return;
+        }
         let streams: Vec<_> = self.graph.borrow().streams().cloned().collect();
         for stream in streams {
             if self.managed.contains_key(&stream.node_id)
@@ -286,7 +376,7 @@ impl Daemon {
         }
     }
 
-    fn shutdown(&mut self) {
+    fn bypass_all(&mut self) {
         let managed = std::mem::take(&mut self.managed);
         for (_, stream) in managed {
             let ManagedStream::Active {
@@ -317,6 +407,22 @@ impl Daemon {
     }
 }
 
+fn parse_domain(value: &str) -> Result<SignalDomain, String> {
+    match value {
+        "playback" => Ok(SignalDomain::Playback),
+        "capture" => Ok(SignalDomain::Capture),
+        _ => Err(format!("unknown direction: {value}")),
+    }
+}
+
+fn parse_enabled(value: &str) -> Result<bool, String> {
+    match value {
+        "on" | "true" => Ok(true),
+        "off" | "false" => Ok(false),
+        _ => Err(format!("expected on or off, got: {value}")),
+    }
+}
+
 fn application_id(stream: &DiscoveredStream) -> String {
     stream
         .application_id
@@ -334,12 +440,18 @@ fn domain_name(domain: SignalDomain) -> &'static str {
     }
 }
 
-pub fn run(controllers: ControllerBank) -> Result<(), Box<dyn Error>> {
+pub fn run(
+    controllers: ControllerBank,
+    config_path: PathBuf,
+    baseline: UserConfig,
+    socket_path: PathBuf,
+) -> Result<(), Box<dyn Error>> {
     let main_loop = MainLoopRc::new(None)?;
     let context = ContextRc::new(&main_loop, None)?;
     let core = context.connect_rc(None)?;
     let registry = core.get_registry_rc()?;
     let (graph, _registry_listener) = track_graph(&registry);
+    let control_server = ControlServer::bind(socket_path)?;
     let running = Rc::new(Cell::new(true));
     let signal_running = Rc::clone(&running);
     let _sig_int = main_loop
@@ -358,14 +470,18 @@ pub fn run(controllers: ControllerBank) -> Result<(), Box<dyn Error>> {
         managed: HashMap::new(),
         unsupported: HashSet::new(),
         retained_direct_links: Vec::new(),
+        config_path,
+        runtime_config: RuntimeConfig::new(baseline),
+        enabled: true,
     };
 
     eprintln!("loudnessd: monitoring and normalizing PipeWire application streams");
     while running.get() {
         main_loop.loop_().iterate(Timeout::Finite(CONTROL_INTERVAL));
         daemon.tick();
+        daemon.process_requests(&control_server);
     }
-    daemon.shutdown();
+    daemon.bypass_all();
     Ok(())
 }
 

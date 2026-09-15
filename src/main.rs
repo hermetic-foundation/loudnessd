@@ -7,7 +7,7 @@ use std::{
 };
 
 use loudnessd::{
-    ControllerBank, Decision, Observation, SignalDomain, UserConfig, daemon,
+    ControllerBank, Decision, Observation, SignalDomain, UserConfig, daemon, ipc,
     pipewire_backend::snapshot_streams,
 };
 
@@ -51,10 +51,16 @@ fn create_starter_config(path: &Path) -> io::Result<bool> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let all_arguments: Vec<_> = std::env::args().skip(1).collect();
+    if all_arguments.first().map(String::as_str) == Some("msg") {
+        let response = ipc::send(&ipc::default_socket_path()?, &all_arguments[1..])?;
+        print!("{response}");
+        return Ok(());
+    }
     let mut config_path = None;
     let mut daemon = false;
     let mut list_streams = false;
-    let mut arguments = std::env::args().skip(1);
+    let mut arguments = all_arguments.into_iter();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--config" => config_path = Some(arguments.next().ok_or("--config needs a path")?),
@@ -84,11 +90,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (None, false) => None,
     };
 
-    let mut controllers = ControllerBank::defaults();
-    if let Some(path) = config_path {
+    let baseline = if let Some(path) = config_path.as_ref() {
         let source = std::fs::read_to_string(path)?;
-        controllers.apply_user_config(UserConfig::from_toml(&source)?);
-    }
+        UserConfig::from_toml(&source)?
+    } else {
+        UserConfig::default()
+    };
+    let mut controllers = ControllerBank::defaults();
+    controllers.apply_user_config(baseline.clone());
 
     if list_streams {
         for stream in snapshot_streams()? {
@@ -109,7 +118,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if daemon {
-        daemon::run(controllers)?;
+        daemon::run(
+            controllers,
+            config_path.expect("daemon mode always resolves a config path"),
+            baseline,
+            ipc::default_socket_path()?,
+        )?;
         return Ok(());
     }
     eprintln!("loudnessd: dry-run controller; no audio graph changes will be made");

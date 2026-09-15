@@ -22,7 +22,7 @@ pub enum RegistryEvent {
     Removed(DiscoveredStream),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PortDirection {
     Input,
     Output,

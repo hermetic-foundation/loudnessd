@@ -8,6 +8,7 @@ pub mod gain;
 pub mod meter;
 pub mod pipewire_backend;
 pub mod pipewire_filter;
+pub mod routing;
 pub mod stream_control;
 
 #[derive(Clone, Copy, Debug, PartialEq)]

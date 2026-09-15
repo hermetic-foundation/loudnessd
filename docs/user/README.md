@@ -66,9 +66,17 @@ systemctl --user status loudnessd
 journalctl --user -u loudnessd
 ```
 
-The daemon owns only transient PipeWire nodes and links. A clean stop restores
-direct routes before removing its filters. If a device move supersedes a route,
-the daemon releases the old filter and reconnects to the new route.
+The daemon owns transient processing nodes and replacement links. A clean stop
+restores ordinary direct routes before removing its filters. Restored direct
+routes intentionally remain after the daemon disconnects. If a device move
+supersedes a route, the daemon releases the old filter and reconnects to the
+new route.
+
+Before cutover, loudnessd writes the original direct endpoints to a private
+`$XDG_RUNTIME_DIR/loudnessd-routes.toml` journal. After an unclean exit, the
+next service start restores missing direct links before normalization resumes.
+The journal is removed after a clean bypass. It contains PipeWire object IDs,
+not audio or application data.
 
 ## Runtime control
 

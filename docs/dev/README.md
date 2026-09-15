@@ -77,16 +77,23 @@ bounded read time so an incomplete client cannot stall the control loop.
 
 ## Graph ownership and cleanup
 
-Every processing node and link is owned by the daemon's PipeWire
-connection and will not be persistent. Disabling or stopping processing first
-bypasses each affected stream back to its original route, then removes the
-daemon-owned links and nodes. Disconnecting the client provides a final cleanup
-boundary, including after a crash.
+Every processing node and replacement link is owned by the daemon's PipeWire
+connection and is non-lingering. Disabling or stopping processing first
+creates lingering direct links, deactivates each filter, then removes the
+daemon-owned replacement links and nodes. Lingering is intentional for restored
+direct routes: otherwise a clean daemon disconnect would silence the stream.
 
 `loudnessd msg disable` performs the same ordered bypass and teardown while
 leaving the daemon available for inspection and later re-enablement. Processing
 must fail open: an internal error restores the original route rather than
 interrupting application audio.
+
+Before removing any original link, the daemon atomically records all direct
+endpoints in a mode-`0600` runtime journal. A restarted daemon validates that
+the recorded ports still exist, restores missing direct links, and only then
+resumes discovery and normalization. PipeWire service restarts propagate to
+the NixOS user unit, preventing object IDs from being reused across a server
+restart. Journals whose endpoints disappeared are discarded without linking.
 
 ## Validation
 
@@ -95,12 +102,14 @@ policy, gain continuity, peak limiting, route planning, transaction rollback,
 runtime overlays, deterministic export, and socket ownership. Ignored live
 tests exercise registry discovery, filter registration, transient link cleanup,
 and install/bypass transactions against a running PipeWire session using only
-disposable nodes.
+disposable nodes. A live two-channel sample-flow test through a disposable null
+sink also verified runtime disable, clean bypass, forced process termination,
+journal restoration on restart, and resumed normalization.
 
 The Nix flake checks the Rust package and evaluates the NixOS module, including
 its generated immutable TOML and graphical-session user unit. Before a stable
-release, validation still needs sustained listening tests, forced daemon crash
-recovery, and active Wine/Proton playback and capture coverage.
+release, validation still needs sustained listening tests and active Wine/Proton
+playback and capture coverage.
 
 ## Playback calibration
 

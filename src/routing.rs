@@ -36,6 +36,55 @@ pub struct RoutePlan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RouteTransition {
+    pub stage: Vec<LinkSpec>,
+    pub cutover: Vec<OriginalLink>,
+    pub activate_filter: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OriginalLink {
+    pub link_id: u32,
+    pub spec: LinkSpec,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RouteTeardown {
+    pub restore: Vec<LinkSpec>,
+    pub deactivate_filter: bool,
+    pub remove_owned_links: bool,
+}
+
+impl RoutePlan {
+    pub fn insertion(&self) -> RouteTransition {
+        RouteTransition {
+            stage: self
+                .channels
+                .iter()
+                .flat_map(|route| [route.into_filter, route.out_of_filter])
+                .collect(),
+            cutover: self
+                .channels
+                .iter()
+                .map(|route| OriginalLink {
+                    link_id: route.original_link_id,
+                    spec: route.original,
+                })
+                .collect(),
+            activate_filter: true,
+        }
+    }
+
+    pub fn teardown(&self) -> RouteTeardown {
+        RouteTeardown {
+            restore: self.channels.iter().map(|route| route.original).collect(),
+            deactivate_filter: true,
+            remove_owned_links: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RoutePlanError {
     NoStreamPorts,
     MissingChannel {
@@ -332,5 +381,54 @@ mod tests {
                 direction: PortDirection::Output,
             }
         );
+    }
+
+    #[test]
+    fn insertion_stages_every_filter_link_before_cutover() {
+        let ports = [
+            port(11, 10, PortDirection::Output, "FL"),
+            port(12, 10, PortDirection::Output, "FR"),
+            port(31, 30, PortDirection::Input, "FL"),
+            port(32, 30, PortDirection::Output, "FL"),
+            port(33, 30, PortDirection::Input, "FR"),
+            port(34, 30, PortDirection::Output, "FR"),
+        ];
+        let plan = plan_route(
+            SignalDomain::Playback,
+            10,
+            30,
+            &ports,
+            &[link(40, 10, 11, 20, 21), link(41, 10, 12, 20, 22)],
+        )
+        .unwrap();
+
+        let transition = plan.insertion();
+        assert_eq!(transition.stage.len(), 4);
+        assert_eq!(transition.cutover.len(), 2);
+        assert!(transition.activate_filter);
+        assert_eq!(transition.cutover[0].link_id, 40);
+        assert_eq!(transition.cutover[1].link_id, 41);
+    }
+
+    #[test]
+    fn teardown_restores_originals_before_removing_owned_graph() {
+        let ports = [
+            port(11, 10, PortDirection::Output, "FL"),
+            port(31, 30, PortDirection::Input, "FL"),
+            port(32, 30, PortDirection::Output, "FL"),
+        ];
+        let plan = plan_route(
+            SignalDomain::Playback,
+            10,
+            30,
+            &ports,
+            &[link(40, 10, 11, 20, 21)],
+        )
+        .unwrap();
+
+        let teardown = plan.teardown();
+        assert_eq!(teardown.restore, vec![plan.channels[0].original]);
+        assert!(teardown.deactivate_filter);
+        assert!(teardown.remove_owned_links);
     }
 }

@@ -4,6 +4,8 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
+pub mod meter;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ControllerConfig {
     pub target_lufs: f32,

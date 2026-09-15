@@ -6,6 +6,7 @@ license = "AGPL-3.0-or-later"
 description = "Per-application perceived-loudness controller for PipeWire"
 
 [dependencies]
+ebur128-stream = "0.2.0"
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
 

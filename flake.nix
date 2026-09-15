@@ -50,6 +50,7 @@
           package = self.packages.${system}.default;
           module =
             assert builtins.elem "graphical-session.target" service.wantedBy;
+            assert builtins.elem "pipewire.service" service.partOf;
             pkgs.runCommand "loudnessd-module-check"
               {
                 execStart = service.serviceConfig.ExecStart;

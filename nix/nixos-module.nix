@@ -92,7 +92,10 @@ in
       documentation = [ "https://github.com/hermetic-foundation/loudnessd" ];
       after = [ "pipewire.service" ];
       wants = [ "pipewire.service" ];
-      partOf = [ "graphical-session.target" ];
+      partOf = [
+        "graphical-session.target"
+        "pipewire.service"
+      ];
       wantedBy = [ "graphical-session.target" ];
       serviceConfig = {
         ExecStart = "${lib.getExe cfg.package} --daemon --config ${effectiveConfigFile}";

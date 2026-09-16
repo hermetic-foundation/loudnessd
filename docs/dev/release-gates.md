@@ -6,8 +6,8 @@ lifecycle behavior depend on a live PipeWire graph.
 
 ## Automated checks
 
-- `cargo fmt --check`, Clippy with warnings denied, and all non-live Rust tests
-  pass.
+- `cargo fmt --check`, Clippy with warnings denied, ShellCheck for every live
+  harness, and all non-live Rust tests pass.
 - Every ignored live PipeWire test passes serially in a real user session.
 - `nix flake check` passes and builds both the package and NixOS module checks.
 - The reusable `Nix CI` workflow passes on the exact commit proposed for a

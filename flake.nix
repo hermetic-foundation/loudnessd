@@ -97,6 +97,16 @@
             '';
             postInstall = "";
           });
+          shellcheck =
+            pkgs.runCommand "loudnessd-shellcheck"
+              {
+                nativeBuildInputs = [ pkgs.shellcheck ];
+                harness = ./tests/live/playback-soak.sh;
+              }
+              ''
+                shellcheck "$harness"
+                touch "$out"
+              '';
           module =
             assert builtins.elem "graphical-session.target" service.wantedBy;
             assert builtins.elem "pipewire.service" service.partOf;
@@ -131,6 +141,7 @@
               pkg-config
               rustc
               rustfmt
+              shellcheck
             ];
             nativeBuildInputs = [ pkgs.rustPlatform.bindgenHook ];
             buildInputs = [ pkgs.pipewire ];

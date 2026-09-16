@@ -281,13 +281,17 @@ pub(super) unsafe extern "C" fn callback(
         else {
             continue;
         };
-        process_mono_buffers(
-            input.as_ptr(),
-            output_buffer.as_ptr(),
-            sample_count,
-            &mut output.gain,
-            target_gain_db,
-        );
+        // SAFETY: Both pointers came from buffers acquired for this process
+        // cycle and are valid for sample_count f32 samples.
+        unsafe {
+            process_mono_buffers(
+                input.as_ptr(),
+                output_buffer.as_ptr(),
+                sample_count,
+                &mut output.gain,
+                target_gain_db,
+            );
+        }
     }
     let limiter_reduction_db = limit_output_ports(data, &buffers, sample_count, sample_rate);
     data.maximum_limiter_reduction_db = data.maximum_limiter_reduction_db.max(limiter_reduction_db);
@@ -427,20 +431,23 @@ fn meter_ports(
     .flatten()
 }
 
-fn process_mono_buffers(
+pub(super) unsafe fn process_mono_buffers(
     input: *mut f32,
     output: *mut f32,
     sample_count: u32,
     gain: &mut GainStage,
     target_gain_db: f32,
 ) {
-    // SAFETY: Both PipeWire port buffers are valid for sample_count f32
-    // samples for the duration of this process cycle.
-    let input = unsafe { std::slice::from_raw_parts(input, sample_count as usize) };
+    // SAFETY: The caller guarantees both pointers are valid for sample_count
+    // f32 samples. ptr::copy permits PipeWire to provide identical or
+    // overlapping input and output buffers without creating aliased slices.
+    unsafe { std::ptr::copy(input, output, sample_count as usize) };
     let output = unsafe { std::slice::from_raw_parts_mut(output, sample_count as usize) };
-    process_samples(input, output, gain, target_gain_db);
+    let result = gain.process_interleaved(output, 1, target_gain_db);
+    debug_assert!(result.is_ok(), "validated filter gain must process");
 }
 
+#[cfg(test)]
 pub(super) fn process_samples(
     input: &[f32],
     output: &mut [f32],

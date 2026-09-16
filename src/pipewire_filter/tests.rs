@@ -6,7 +6,7 @@ use pipewire::loop_::Timeout;
 use super::{
     process::{
         CallbackPort, CycleBuffers, ProcessMetrics, PublishedMetrics, meter_channel,
-        process_sample_rate, process_samples, target_gain_bits,
+        process_mono_buffers, process_sample_rate, process_samples, target_gain_bits,
     },
     *,
 };
@@ -71,6 +71,26 @@ fn process_callback_applies_a_smooth_target_gain() {
 
     assert!((output[0] - 1.0).abs() < 0.0001);
     assert!((output[3] - 0.5).abs() < 0.0001);
+}
+
+#[test]
+fn process_callback_supports_an_in_place_pipewire_buffer() {
+    let mut samples = [0.25, -0.5, 0.75, -1.0];
+    let mut gain = GainStage::default();
+
+    // SAFETY: The same live array is valid as both buffers, and the process
+    // helper explicitly supports overlapping PipeWire buffers.
+    unsafe {
+        process_mono_buffers(
+            samples.as_mut_ptr(),
+            samples.as_mut_ptr(),
+            samples.len() as u32,
+            &mut gain,
+            0.0,
+        );
+    }
+
+    assert_eq!(samples, [0.25, -0.5, 0.75, -1.0]);
 }
 
 #[test]

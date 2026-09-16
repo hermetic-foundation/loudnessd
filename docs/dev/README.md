@@ -45,7 +45,8 @@ The implementation and tests enforce that it:
 
 Wine and Proton expose ordinary PipeWire application streams, but their
 identity metadata is not consistent enough to treat process names as stable
-keys. Live Wine/Proton behavior remains a release-validation requirement.
+keys. Policy matching therefore uses the application identity reported by
+`loudnessd --list-streams`, not the inherited Wine client process name.
 
 The last requirement follows from the retired prototype: it wrote a 200%
 Chromium stream volume through `pactl`, and WirePlumber restored that broad
@@ -108,6 +109,14 @@ journal restoration on restart, and resumed normalization. A separate
 two-channel capture test linked only the null sink's monitor ports to a
 discarding client and verified capture filter insertion and clean bypass.
 
+The process callback acquires every PipeWire DSP buffer exactly once per port
+and cycle, then reuses that pointer for metering, gain, and peak limiting.
+Calling `pw_filter_get_dsp_buffer` more than once for the same port dequeues
+different buffers and previously caused one processed quantum followed by
+silence. Unit coverage enforces the one-acquisition invariant and verifies
+that one temporarily unavailable channel does not discard other available
+buffers.
+
 The Nix flake checks the Rust package and evaluates the NixOS module, including
 its generated immutable TOML and graphical-session user unit.
 
@@ -126,13 +135,27 @@ Native desktop validation on NixOS additionally covered:
 - compositor focus changes between monitors, which did not change source
   loudness, reset controller state, or interrupt processing.
 
+Post-fix release validation also covered continuous sample flow through both
+directions at 100% stream volume:
+
+- a 15-second synthetic playback stream measured `-27.09 LUFS`, reached
+  `+13.40 dB` normalization gain, and remained continuous apart from the
+  expected initial and route-transition quanta;
+- a 15-second synthetic capture stream measured `-27.55 LUFS`, reached
+  `+7.35 dB` gain, and remained continuous through filter insertion; and
+- live Skyrim playback under Wine matched the `TESV: Skyrim` application
+  identity, reached `+14.80 dB` gain from a roughly `-38.40 LUFS` source, and
+  kept the application stream at exactly 100% volume.
+
 Changing the physical sink from 25% to 20% and back left source LUFS and
 normalization gain unchanged, confirming that master volume remains downstream.
 The deployed systemd user service also restarted cleanly during NixOS activation
 without restarting PipeWire or the compositor.
 
 Before a stable release, validation still needs subjective sustained listening
-across varied content and active Wine/Proton playback and capture coverage.
+across varied content and active Wine/Proton capture coverage. Wine playback
+has been validated with Skyrim, but no Wine capture stream was available during
+this test pass.
 
 ## Playback calibration
 

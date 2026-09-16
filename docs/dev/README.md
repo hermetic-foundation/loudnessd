@@ -1,5 +1,8 @@
 # Developer guide
 
+The measurable criteria for promoting a build beyond experimental status are
+defined in the [release gates](release-gates.md).
+
 ## Architecture
 
 Every PipeWire media stream gets independent controller state. Application

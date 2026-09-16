@@ -124,6 +124,11 @@ buffers.
 The Nix flake checks the Rust package and evaluates the NixOS module, including
 its generated immutable TOML and graphical-session user unit.
 
+`tests/live/playback-soak.sh` drives two varied 48 kHz stereo streams into a
+disposable null sink, runs the candidate daemon for a bounded duration, and
+records NDJSON status without retaining audio. Its exit trap removes the
+streams and sink and restores the ordinary `loudnessd.service`.
+
 Native desktop validation on NixOS additionally covered:
 
 - two simultaneous Chromium playback streams with independent `-10.99 LUFS`

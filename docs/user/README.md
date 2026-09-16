@@ -128,6 +128,9 @@ loudnessd msg reset application-a
 
 `status-json` reports the same daemon, route, controller, source, output, peak,
 gain, and limiter state as structured JSON for soak tests and monitoring tools.
+It also includes the meter sequence, configured target, and gain-limit state so
+monitors can distinguish silence from a stalled audio callback and exclude
+clamped streams from convergence scoring.
 
 `disable` bypasses every active stream but leaves the daemon available.
 `reload` rereads the original `--config` path. `set` and `reset` are in-memory

@@ -246,6 +246,13 @@ impl ControllerBank {
             SignalDomain::Capture => self.capture.stream(stream_id),
         }
     }
+
+    pub fn config(&self, domain: SignalDomain) -> ControllerConfig {
+        match domain {
+            SignalDomain::Playback => self.playback.config(),
+            SignalDomain::Capture => self.capture.config(),
+        }
+    }
 }
 
 impl Controller {
@@ -302,6 +309,10 @@ impl Controller {
 
     pub fn stream(&self, stream_id: &str) -> Option<StreamState> {
         self.streams.get(stream_id).copied()
+    }
+
+    pub fn config(&self) -> ControllerConfig {
+        self.config
     }
 }
 

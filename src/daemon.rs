@@ -158,22 +158,29 @@ impl Daemon {
                 };
                 let update = control.last_update();
                 let meter = update.map(|update| update.meter);
+                let controller_config = self.controllers.config(control.domain());
+                let gain_db = update
+                    .map(|update| update.decision.target_gain_db())
+                    .unwrap_or(0.0);
+                let gain_clamped = (gain_db - controller_config.maximum_boost_db).abs() < 0.001
+                    || (gain_db + controller_config.maximum_cut_db).abs() < 0.001;
                 StreamStatus {
                     node_id: *node_id,
                     domain: domain_name(control.domain()).to_owned(),
                     application: control.application_id().to_owned(),
+                    meter_sequence: meter.map(|meter| meter.sequence),
                     lifecycle,
                     route,
                     control: update
                         .map(|update| control_status(update.decision))
                         .unwrap_or(ControlStatus::Waiting),
+                    target_lufs: controller_config.target_lufs,
                     source_lufs: meter.map(|meter| meter.source_loudness_lufs),
                     source_peak_dbtp: meter.and_then(|meter| meter.source_true_peak_dbtp),
                     output_lufs: meter.and_then(|meter| meter.output_loudness_lufs),
                     output_peak_dbtp: meter.and_then(|meter| meter.output_true_peak_dbtp),
-                    gain_db: update
-                        .map(|update| update.decision.target_gain_db())
-                        .unwrap_or(0.0),
+                    gain_db,
+                    gain_clamped,
                     limiter_db: meter.map(|meter| meter.limiter_reduction_db).unwrap_or(0.0),
                     limiter_max_db: meter
                         .map(|meter| meter.maximum_limiter_reduction_db)

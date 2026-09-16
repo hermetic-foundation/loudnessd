@@ -170,5 +170,9 @@ generated Nix-store configuration or `services.loudnessd.configFile`.
   normalized; unsupported topology is left untouched.
 - Application metadata varies between native, Wine, and Proton software, so
   inspect `--list-streams` before relying on a per-application override.
+- Native Chromium and PipeWire playback and capture clients have been validated
+  on a multi-monitor NixOS desktop. Wine and Proton streams still require live
+  validation with an active application before they should be treated as a
+  stable matching contract.
 - The current release supports PipeWire's negotiated planar floating-point DSP
   buffers. The filter follows the graph sample rate at runtime.

@@ -109,9 +109,30 @@ two-channel capture test linked only the null sink's monitor ports to a
 discarding client and verified capture filter insertion and clean bypass.
 
 The Nix flake checks the Rust package and evaluates the NixOS module, including
-its generated immutable TOML and graphical-session user unit. Before a stable
-release, validation still needs sustained listening tests and active Wine/Proton
-playback and capture coverage.
+its generated immutable TOML and graphical-session user unit.
+
+Native desktop validation on NixOS additionally covered:
+
+- two simultaneous Chromium playback streams with independent `-10.99 LUFS`
+  and `-31.14 LUFS` source levels, which settled at `-1.50 dB` and `+17.40 dB`
+  gain without changing either stream's persisted 100% volume;
+- a real PipeWire capture client connected to the default microphone and
+  writing to `/dev/null`, which stayed near the capture silence gate and did
+  not receive an inappropriate boost;
+- runtime disable and re-enable while a native playback stream remained
+  active, including direct-route restoration and filter reinsertion;
+- a playback stream created while a muted HDMI sink was the default, whose
+  filter outputs followed HDMI before the USB default was restored; and
+- compositor focus changes between monitors, which did not change source
+  loudness, reset controller state, or interrupt processing.
+
+Changing the physical sink from 25% to 20% and back left source LUFS and
+normalization gain unchanged, confirming that master volume remains downstream.
+The deployed systemd user service also restarted cleanly during NixOS activation
+without restarting PipeWire or the compositor.
+
+Before a stable release, validation still needs subjective sustained listening
+across varied content and active Wine/Proton playback and capture coverage.
 
 ## Playback calibration
 

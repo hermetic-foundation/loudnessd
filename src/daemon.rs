@@ -16,7 +16,7 @@ use pipewire::{context::ContextRc, loop_::Timeout, main_loop::MainLoopRc};
 use signal_hook::consts::signal::{SIGINT, SIGTERM};
 
 use crate::{
-    ControllerBank, SignalDomain, UserConfig,
+    ControllerBank, ControllerConfig, SignalDomain, UserConfig,
     ipc::{ControlServer, write_response},
     pipewire_backend::{
         DiscoveredStream, GraphState, PortDirection as GraphPortDirection, track_graph,
@@ -163,8 +163,11 @@ impl Daemon {
                 let gain_db = update
                     .map(|update| update.decision.target_gain_db())
                     .unwrap_or(0.0);
-                let gain_clamped = (gain_db - controller_config.maximum_boost_db).abs() < 0.001
-                    || (gain_db + controller_config.maximum_cut_db).abs() < 0.001;
+                let gain_clamped = gain_is_limited(
+                    controller_config,
+                    gain_db,
+                    meter.map(|meter| meter.source_loudness_lufs),
+                );
                 StreamStatus {
                     node_id: *node_id,
                     domain: domain_name(control.domain()).to_owned(),
@@ -635,6 +638,17 @@ impl Daemon {
     }
 }
 
+fn gain_is_limited(config: ControllerConfig, gain_db: f32, source_lufs: Option<f32>) -> bool {
+    const TOLERANCE_DB: f32 = 0.001;
+    (gain_db - config.maximum_boost_db).abs() < TOLERANCE_DB
+        || (gain_db + config.maximum_cut_db).abs() < TOLERANCE_DB
+        || source_lufs.is_some_and(|source_lufs| {
+            let required_gain_db = config.target_lufs - source_lufs;
+            required_gain_db > config.maximum_boost_db + TOLERANCE_DB
+                || required_gain_db < -config.maximum_cut_db - TOLERANCE_DB
+        })
+}
+
 fn recovery_endpoints_present(graph: &GraphState, specs: &[crate::routing::LinkSpec]) -> bool {
     specs.iter().all(|spec| {
         graph.contains_port(
@@ -772,5 +786,19 @@ mod tests {
         };
 
         assert_eq!(application_id(&stream), "node-42");
+    }
+
+    #[test]
+    fn reports_gain_limited_before_slew_reaches_the_limit() {
+        let config = ControllerConfig::default();
+
+        assert!(gain_is_limited(config, 3.0, Some(-40.0)));
+        assert!(gain_is_limited(
+            config,
+            config.maximum_boost_db,
+            Some(-20.0)
+        ));
+        assert!(!gain_is_limited(config, 3.0, Some(-16.0)));
+        assert!(!gain_is_limited(config, 0.0, None));
     }
 }

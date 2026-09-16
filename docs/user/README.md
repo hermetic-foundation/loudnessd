@@ -130,7 +130,8 @@ loudnessd msg reset application-a
 gain, and limiter state as structured JSON for soak tests and monitoring tools.
 It also includes the meter sequence, configured target, and gain-limit state so
 monitors can distinguish silence from a stalled audio callback and exclude
-clamped streams from convergence scoring.
+target-unreachable streams from convergence scoring, including while their gain
+is still slewing toward a configured limit.
 
 Run a bounded soak monitor and optionally retain its raw NDJSON observations:
 

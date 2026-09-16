@@ -82,6 +82,9 @@ During the eight-hour soak:
 - there are no daemon restarts, real-time callback allocation regressions,
   unbounded log growth, or control-socket stalls.
 
+The soak report's `daemon_restarts` field must be zero; process identity is the
+pair of `pid` and `start_time_ticks`, so PID reuse cannot hide a restart.
+
 Hardware, PipeWire version, sample rate, stream count, and measurement commands
 must accompany the recorded results so regressions can be compared fairly.
 

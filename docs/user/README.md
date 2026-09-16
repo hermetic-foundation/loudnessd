@@ -140,10 +140,12 @@ loudnessd monitor --duration 3600 --interval 1000 --output loudnessd-soak.ndjson
 ```
 
 The final JSON summary reports IPC failures, unhealthy routes, stalled callback
-sequences, in-progress slew observations, convergence within 1.5 LU after the
-controller settles, and maximum limiter reduction. It also records initial,
-final, and peak resident memory, memory growth, and average daemon CPU use. The
-NDJSON contains status measurements and metadata only; it never contains audio
+sequences, daemon restarts, in-progress slew observations, convergence within
+1.5 LU after the controller settles, and maximum limiter reduction. It also
+records initial, final, and peak resident memory, memory growth, and average
+daemon CPU use. CPU accounting remains valid across a daemon restart because
+status includes both the process ID and Linux process start time. The NDJSON
+contains status measurements and metadata only; it never contains audio
 samples.
 
 `disable` bypasses every active stream but leaves the daemon available.

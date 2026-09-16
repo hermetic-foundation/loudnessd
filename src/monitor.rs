@@ -41,6 +41,7 @@ pub struct SoakReport {
     pub elapsed_milliseconds: u64,
     pub samples: u64,
     pub ipc_failures: u64,
+    pub daemon_restarts: u64,
     pub unhealthy_route_observations: u64,
     pub stalled_callback_observations: u64,
     pub converging_observations: u64,
@@ -65,9 +66,16 @@ struct TimedStatus<'a> {
 struct SoakAccumulator {
     report: SoakReport,
     sequences: HashMap<u32, u64>,
-    initial_cpu_ticks: Option<u64>,
-    final_cpu_ticks: Option<u64>,
+    previous_process: Option<ProcessSample>,
+    accumulated_cpu_ticks: u64,
     clock_ticks_per_second: Option<u64>,
+}
+
+#[derive(Clone, Copy)]
+struct ProcessSample {
+    pid: u32,
+    start_time_ticks: u64,
+    cpu_ticks: u64,
 }
 
 impl SoakAccumulator {
@@ -85,8 +93,23 @@ impl SoakAccumulator {
                     .max(process.rss_bytes),
             );
             let cpu_ticks = process.user_cpu_ticks + process.system_cpu_ticks;
-            self.initial_cpu_ticks.get_or_insert(cpu_ticks);
-            self.final_cpu_ticks = Some(cpu_ticks);
+            let sample = ProcessSample {
+                pid: process.pid,
+                start_time_ticks: process.start_time_ticks,
+                cpu_ticks,
+            };
+            if let Some(previous) = self.previous_process {
+                if (sample.pid, sample.start_time_ticks)
+                    == (previous.pid, previous.start_time_ticks)
+                {
+                    self.accumulated_cpu_ticks = self
+                        .accumulated_cpu_ticks
+                        .saturating_add(sample.cpu_ticks.saturating_sub(previous.cpu_ticks));
+                } else {
+                    self.report.daemon_restarts += 1;
+                }
+            }
+            self.previous_process = Some(sample);
             self.clock_ticks_per_second = Some(process.clock_ticks_per_second);
         }
         for stream in &status.streams {
@@ -138,14 +161,11 @@ impl SoakAccumulator {
             .initial_rss_bytes
             .zip(self.report.final_rss_bytes)
             .map(|(initial, last)| last as i64 - initial as i64);
-        self.report.average_cpu_percent = self
-            .initial_cpu_ticks
-            .zip(self.final_cpu_ticks)
-            .zip(self.clock_ticks_per_second)
-            .and_then(|((initial, last), ticks_per_second)| {
+        self.report.average_cpu_percent =
+            self.clock_ticks_per_second.and_then(|ticks_per_second| {
                 let seconds = elapsed.as_secs_f64();
                 (seconds > 0.0 && ticks_per_second > 0).then(|| {
-                    last.saturating_sub(initial) as f64 / ticks_per_second as f64 / seconds * 100.0
+                    self.accumulated_cpu_ticks as f64 / ticks_per_second as f64 / seconds * 100.0
                 })
             });
         self.report
@@ -214,6 +234,8 @@ mod tests {
             managed: 1,
             active: 1,
             process: Some(ProcessStatus {
+                pid: 100,
+                start_time_ticks: 1_000,
                 rss_bytes: 2_000_000 + sequence * 1000,
                 user_cpu_ticks: sequence * 10,
                 system_cpu_ticks: sequence * 5,
@@ -249,6 +271,7 @@ mod tests {
 
         let report = accumulator.finish(Duration::from_secs(3));
         assert_eq!(report.samples, 3);
+        assert_eq!(report.daemon_restarts, 0);
         assert_eq!(report.stalled_callback_observations, 1);
         assert_eq!(report.convergence_eligible_observations, 3);
         assert_eq!(report.convergence_passing_observations, 2);
@@ -257,6 +280,34 @@ mod tests {
         assert_eq!(report.initial_rss_bytes, Some(2_001_000));
         assert_eq!(report.final_rss_bytes, Some(2_002_000));
         assert_eq!(report.rss_growth_bytes, Some(1000));
+        assert_eq!(report.average_cpu_percent, Some(5.0));
+    }
+
+    #[test]
+    fn detects_restarts_without_treating_reset_cpu_ticks_as_wraparound() {
+        let mut accumulator = SoakAccumulator::default();
+        let mut before = status(10, -13.0);
+        let before_process = before.process.as_mut().unwrap();
+        before_process.user_cpu_ticks = 80;
+        before_process.system_cpu_ticks = 20;
+        accumulator.observe(&before);
+
+        let mut restarted = status(1, -13.0);
+        let restarted_process = restarted.process.as_mut().unwrap();
+        restarted_process.pid = 101;
+        restarted_process.start_time_ticks = 2_000;
+        restarted_process.user_cpu_ticks = 4;
+        restarted_process.system_cpu_ticks = 1;
+        accumulator.observe(&restarted);
+
+        let mut after = restarted;
+        let after_process = after.process.as_mut().unwrap();
+        after_process.user_cpu_ticks = 12;
+        after_process.system_cpu_ticks = 3;
+        accumulator.observe(&after);
+
+        let report = accumulator.finish(Duration::from_secs(2));
+        assert_eq!(report.daemon_restarts, 1);
         assert_eq!(report.average_cpu_percent, Some(5.0));
     }
 

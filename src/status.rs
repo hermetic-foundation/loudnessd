@@ -50,6 +50,8 @@ pub struct StreamStatus {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProcessStatus {
+    pub pid: u32,
+    pub start_time_ticks: u64,
     pub rss_bytes: u64,
     pub user_cpu_ticks: u64,
     pub system_cpu_ticks: u64,
@@ -71,6 +73,19 @@ impl DaemonStatus {
             "enabled={} managed={} active={}\n",
             self.enabled, self.managed, self.active
         );
+        if let Some(process) = &self.process {
+            output.push_str(&format!(
+                "process_pid={} process_start_time_ticks={} rss_bytes={} user_cpu_ticks={} system_cpu_ticks={} clock_ticks_per_second={}\n",
+                process.pid,
+                process.start_time_ticks,
+                process.rss_bytes,
+                process.user_cpu_ticks,
+                process.system_cpu_ticks,
+                process.clock_ticks_per_second,
+            ));
+        } else {
+            output.push_str("process=unavailable\n");
+        }
         for stream in &self.streams {
             output.push_str(&format!(
                 "stream={} domain={} application={} sequence={} state={} route={} control={} target_lufs={:.2} source_lufs={} source_peak_dbtp={} output_lufs={} output_peak_dbtp={} gain_db={:.2} gain_clamped={} limiter_db={:.2} limiter_max_db={:.2}\n",
@@ -148,6 +163,8 @@ mod tests {
             managed: 1,
             active: 1,
             process: Some(ProcessStatus {
+                pid: 123,
+                start_time_ticks: 4_567,
                 rss_bytes: 1_572_864,
                 user_cpu_ticks: 10,
                 system_cpu_ticks: 5,
@@ -174,11 +191,14 @@ mod tests {
         };
 
         let text = status.to_text();
+        assert!(text.contains("process_pid=123 process_start_time_ticks=4567"));
         assert!(text.contains("route=healthy control=settled"));
         assert!(text.contains("output_lufs=-13.10"));
 
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["streams"][0]["route"], "healthy");
+        assert_eq!(json["process"]["pid"], 123);
+        assert_eq!(json["process"]["start_time_ticks"], 4_567);
         assert_eq!(json["process"]["rss_bytes"], 1_572_864);
         assert_eq!(json["streams"][0]["meter_sequence"], 12);
         assert_eq!(json["streams"][0]["target_lufs"], -13.0);

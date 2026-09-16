@@ -34,6 +34,7 @@ use crate::{
 };
 
 mod command;
+mod recovery;
 
 use command::Command;
 
@@ -239,126 +240,6 @@ impl Daemon {
         self.unsupported.retain(|node_id| present.contains(node_id));
         if self.managed.len() != previous_count {
             self.sync_recovery_journal(None);
-        }
-    }
-
-    fn prune_retained_direct_links(&mut self) {
-        let graph = self.graph.borrow();
-        self.retained_direct_links
-            .retain(|links| links.ids().any(|id| graph.contains_link_id(id)));
-    }
-
-    fn direct_specs(
-        &self,
-        extra: Option<&crate::routing::RoutePlan>,
-    ) -> Vec<crate::routing::LinkSpec> {
-        let mut specs: Vec<_> = self
-            .managed
-            .values()
-            .filter_map(|managed| match managed {
-                ManagedStream::Active { route, .. } => Some(route.plan()),
-                ManagedStream::Connecting { .. } => None,
-            })
-            .chain(extra)
-            .flat_map(|plan| plan.channels.iter().map(|channel| channel.original))
-            .collect();
-        specs.sort_by_key(|spec| (spec.output.port_id, spec.input.port_id));
-        specs.dedup();
-        specs
-    }
-
-    fn sync_recovery_journal(&self, extra: Option<&crate::routing::RoutePlan>) -> bool {
-        match self.recovery_journal.replace(&self.direct_specs(extra)) {
-            Ok(()) => true,
-            Err(error) => {
-                eprintln!("loudnessd: cannot update route recovery journal: {error}");
-                false
-            }
-        }
-    }
-
-    fn clear_recovery_journal(&self) -> bool {
-        match self.recovery_journal.replace(&[]) {
-            Ok(()) => true,
-            Err(error) => {
-                eprintln!("loudnessd: cannot clear route recovery journal: {error}");
-                false
-            }
-        }
-    }
-
-    fn recover_prior_routes(&mut self) {
-        let specs = match self.recovery_journal.load() {
-            Ok(specs) => specs,
-            Err(error) => {
-                eprintln!("loudnessd: cannot read route recovery journal: {error}");
-                return;
-            }
-        };
-        if specs.is_empty() {
-            return;
-        }
-
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
-        while !recovery_endpoints_present(&self.graph.borrow(), &specs)
-            && std::time::Instant::now() < deadline
-        {
-            self.main_loop
-                .loop_()
-                .iterate(Timeout::Finite(Duration::from_millis(20)));
-        }
-        if !recovery_endpoints_present(&self.graph.borrow(), &specs) {
-            eprintln!("loudnessd: prior route endpoints disappeared; discarding recovery journal");
-            self.clear_recovery_journal();
-            return;
-        }
-
-        let missing: Vec<_> = specs
-            .iter()
-            .copied()
-            .filter(|spec| {
-                !self
-                    .graph
-                    .borrow()
-                    .contains_link(spec.output.port_id, spec.input.port_id)
-            })
-            .collect();
-        if missing.is_empty() {
-            self.clear_recovery_journal();
-            return;
-        }
-        match OwnedLinks::create_lingering(&self.core, &self.registry, &missing) {
-            Ok(links) => {
-                let deadline = std::time::Instant::now() + Duration::from_secs(2);
-                while !missing.iter().all(|spec| {
-                    self.graph
-                        .borrow()
-                        .contains_link(spec.output.port_id, spec.input.port_id)
-                }) && std::time::Instant::now() < deadline
-                {
-                    self.main_loop
-                        .loop_()
-                        .iterate(Timeout::Finite(Duration::from_millis(20)));
-                }
-                if missing.iter().all(|spec| {
-                    self.graph
-                        .borrow()
-                        .contains_link(spec.output.port_id, spec.input.port_id)
-                }) {
-                    eprintln!(
-                        "loudnessd: restored {} direct links after an unclean exit",
-                        missing.len()
-                    );
-                    drop(links);
-                    self.clear_recovery_journal();
-                } else {
-                    eprintln!("loudnessd: timed out restoring direct links after an unclean exit");
-                    links.destroy_globals(&self.registry);
-                }
-            }
-            Err(error) => {
-                eprintln!("loudnessd: cannot restore routes after an unclean exit: {error}")
-            }
         }
     }
 
@@ -707,20 +588,6 @@ fn gain_is_limited(config: ControllerConfig, gain_db: f32, source_lufs: Option<f
             required_gain_db > config.maximum_boost_db + TOLERANCE_DB
                 || required_gain_db < -config.maximum_cut_db - TOLERANCE_DB
         })
-}
-
-fn recovery_endpoints_present(graph: &GraphState, specs: &[crate::routing::LinkSpec]) -> bool {
-    specs.iter().all(|spec| {
-        graph.contains_port(
-            spec.output.node_id,
-            spec.output.port_id,
-            GraphPortDirection::Output,
-        ) && graph.contains_port(
-            spec.input.node_id,
-            spec.input.port_id,
-            GraphPortDirection::Input,
-        )
-    })
 }
 
 fn control_status(decision: crate::Decision) -> ControlStatus {

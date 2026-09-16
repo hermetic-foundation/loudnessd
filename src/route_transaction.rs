@@ -339,4 +339,21 @@ mod tests {
         assert_eq!(error.route.plan().filter_node_id, 30);
         assert_eq!(backend.events, ["create", "deactivate", "destroy"]);
     }
+
+    #[test]
+    fn failed_direct_restore_keeps_the_active_route_owned() {
+        let mut backend = FakeBackend::default();
+        let route = install(&mut backend, plan()).unwrap();
+        backend.events.clear();
+        backend.failure = Some(Failure::Create(2));
+
+        let error = bypass(&mut backend, route).err().unwrap();
+
+        assert_eq!(
+            error.transition.operation,
+            TransitionOperation::RestoreOriginal
+        );
+        assert_eq!(error.route.plan().filter_node_id, 30);
+        assert_eq!(backend.events, ["create"]);
+    }
 }

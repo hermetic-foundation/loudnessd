@@ -105,8 +105,9 @@ impl Daemon {
                 let source = std::fs::read_to_string(&self.config_path)
                     .map_err(|error| error.to_string())?;
                 let baseline = UserConfig::from_toml(&source).map_err(|error| error.to_string())?;
-                self.runtime_config.replace_baseline(baseline);
-                self.reconfigure();
+                let mut next = self.runtime_config.clone();
+                next.replace_baseline(baseline);
+                self.reconfigure(next)?;
                 Ok("ok\n".to_owned())
             }
             ["enable"] => {
@@ -116,19 +117,25 @@ impl Daemon {
             }
             ["disable"] => {
                 self.enabled = false;
-                self.bypass_all();
-                Ok("ok\n".to_owned())
+                if self.bypass_all() {
+                    Ok("ok\n".to_owned())
+                } else {
+                    self.enabled = true;
+                    Err("could not bypass every stream; normalization remains enabled".to_owned())
+                }
             }
             ["set", application_id, domain, enabled] => {
                 let domain = parse_domain(domain)?;
                 let enabled = parse_enabled(enabled)?;
-                self.runtime_config.set(*application_id, domain, enabled);
-                self.reconfigure();
+                let mut next = self.runtime_config.clone();
+                next.set(*application_id, domain, enabled);
+                self.reconfigure(next)?;
                 Ok("ok\n".to_owned())
             }
             ["reset", application_id] => {
-                self.runtime_config.reset(application_id);
-                self.reconfigure();
+                let mut next = self.runtime_config.clone();
+                next.reset(application_id);
+                self.reconfigure(next)?;
                 Ok("ok\n".to_owned())
             }
             ["export"] => self
@@ -205,11 +212,14 @@ impl Daemon {
         }
     }
 
-    fn reconfigure(&mut self) {
-        self.bypass_all();
-        self.controllers
-            .apply_user_config(self.runtime_config.effective());
+    fn reconfigure(&mut self, next: RuntimeConfig) -> Result<(), String> {
+        if !self.bypass_all() {
+            return Err("could not bypass every stream; configuration was not applied".to_owned());
+        }
+        self.controllers.apply_user_config(next.effective());
+        self.runtime_config = next;
         self.unsupported.clear();
+        Ok(())
     }
 
     fn remove_disappeared_streams(&mut self) {
@@ -256,6 +266,16 @@ impl Daemon {
         }
     }
 
+    fn clear_recovery_journal(&self) -> bool {
+        match self.recovery_journal.replace(&[]) {
+            Ok(()) => true,
+            Err(error) => {
+                eprintln!("loudnessd: cannot clear route recovery journal: {error}");
+                false
+            }
+        }
+    }
+
     fn recover_prior_routes(&mut self) {
         let specs = match self.recovery_journal.load() {
             Ok(specs) => specs,
@@ -278,7 +298,7 @@ impl Daemon {
         }
         if !recovery_endpoints_present(&self.graph.borrow(), &specs) {
             eprintln!("loudnessd: prior route endpoints disappeared; discarding recovery journal");
-            let _ = self.recovery_journal.replace(&[]);
+            self.clear_recovery_journal();
             return;
         }
 
@@ -293,6 +313,7 @@ impl Daemon {
             })
             .collect();
         if missing.is_empty() {
+            self.clear_recovery_journal();
             return;
         }
         match OwnedLinks::create_lingering(&self.core, &missing) {
@@ -318,6 +339,7 @@ impl Daemon {
                         missing.len()
                     );
                     drop(links);
+                    self.clear_recovery_journal();
                 } else {
                     eprintln!("loudnessd: timed out restoring direct links after an unclean exit");
                     for id in links.ids() {
@@ -351,8 +373,8 @@ impl Daemon {
             let Some(ManagedStream::Active {
                 stream,
                 mut filter,
+                control,
                 route,
-                ..
             }) = self.managed.remove(&node_id)
             else {
                 continue;
@@ -364,23 +386,37 @@ impl Daemon {
                 continue;
             }
 
-            let mut backend = PipewireRouteBackend::new(
-                &self.main_loop,
-                &self.core,
-                &self.registry,
-                Rc::clone(&self.graph),
-                &mut filter,
-                &mut self.retained_direct_links,
-            );
-            match bypass(&mut backend, route) {
+            let result = {
+                let mut backend = PipewireRouteBackend::new(
+                    &self.main_loop,
+                    &self.core,
+                    &self.registry,
+                    Rc::clone(&self.graph),
+                    &mut filter,
+                    &mut self.retained_direct_links,
+                );
+                bypass(&mut backend, route)
+            };
+            match result {
                 Ok(bypassed) => {
                     self.retained_direct_links.push(bypassed.direct_links);
                     eprintln!("loudnessd: recovered broken route for stream {node_id}");
                 }
-                Err(error) => eprintln!(
-                    "loudnessd: broken route recovery failed for stream {} at {:?}: {}",
-                    stream.node_id, error.transition.operation, error.transition.error
-                ),
+                Err(error) => {
+                    eprintln!(
+                        "loudnessd: broken route recovery failed for stream {} at {:?}: {}",
+                        stream.node_id, error.transition.operation, error.transition.error
+                    );
+                    self.managed.insert(
+                        node_id,
+                        ManagedStream::Active {
+                            stream,
+                            filter,
+                            control,
+                            route: error.route,
+                        },
+                    );
+                }
             }
             self.sync_recovery_journal(None);
         }
@@ -606,35 +642,51 @@ impl Daemon {
         }
     }
 
-    fn bypass_all(&mut self) {
+    fn bypass_all(&mut self) -> bool {
         let managed = std::mem::take(&mut self.managed);
-        for (_, stream) in managed {
+        let mut succeeded = true;
+        for (node_id, stream) in managed {
             let ManagedStream::Active {
                 stream,
                 mut filter,
+                control,
                 route,
-                ..
             } = stream
             else {
                 continue;
             };
-            let mut backend = PipewireRouteBackend::new(
-                &self.main_loop,
-                &self.core,
-                &self.registry,
-                Rc::clone(&self.graph),
-                &mut filter,
-                &mut self.retained_direct_links,
-            );
-            match bypass(&mut backend, route) {
+            let result = {
+                let mut backend = PipewireRouteBackend::new(
+                    &self.main_loop,
+                    &self.core,
+                    &self.registry,
+                    Rc::clone(&self.graph),
+                    &mut filter,
+                    &mut self.retained_direct_links,
+                );
+                bypass(&mut backend, route)
+            };
+            match result {
                 Ok(bypassed) => self.retained_direct_links.push(bypassed.direct_links),
-                Err(error) => eprintln!(
-                    "loudnessd: failed to bypass stream {} at {:?}: {}",
-                    stream.node_id, error.transition.operation, error.transition.error
-                ),
+                Err(error) => {
+                    succeeded = false;
+                    eprintln!(
+                        "loudnessd: failed to bypass stream {} at {:?}: {}",
+                        stream.node_id, error.transition.operation, error.transition.error
+                    );
+                    self.managed.insert(
+                        node_id,
+                        ManagedStream::Active {
+                            stream,
+                            filter,
+                            control,
+                            route: error.route,
+                        },
+                    );
+                }
             }
         }
-        let _ = self.recovery_journal.replace(&[]);
+        self.sync_recovery_journal(None) && succeeded
     }
 }
 
@@ -752,8 +804,11 @@ pub fn run(
         daemon.tick();
         daemon.process_requests(&control_server);
     }
-    daemon.bypass_all();
-    Ok(())
+    if daemon.bypass_all() {
+        Ok(())
+    } else {
+        Err("could not restore every direct route during shutdown".into())
+    }
 }
 
 #[cfg(test)]

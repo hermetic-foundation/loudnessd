@@ -93,12 +93,20 @@ leaving the daemon available for inspection and later re-enablement. Processing
 must fail open: an internal error restores the original route rather than
 interrupting application audio.
 
+If direct-link restoration or filter deactivation fails, the daemon retains
+the active filter, replacement links, controller state, and recovery-journal
+entry instead of dropping the only working route. A failed runtime disable or
+configuration change reports an error and keeps normalization enabled. A failed
+shutdown returns an error so the service manager can restart the daemon and
+replay the journal; it never reports a clean stop after losing route ownership.
+
 Before removing any original link, the daemon atomically records all direct
 endpoints in a mode-`0600` runtime journal. A restarted daemon validates that
 the recorded ports still exist, restores missing direct links, and only then
 resumes discovery and normalization. PipeWire service restarts propagate to
 the NixOS user unit, preventing object IDs from being reused across a server
-restart. Journals whose endpoints disappeared are discarded without linking.
+restart. A successfully recovered or already-direct route clears its journal;
+journals whose endpoints disappeared are discarded without linking.
 
 ## Validation
 

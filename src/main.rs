@@ -8,12 +8,14 @@ use std::{
 
 use loudnessd::{
     ControllerBank, Decision, Observation, SignalDomain, UserConfig, daemon, ipc,
+    monitor::{self, MonitorOptions},
     pipewire_backend::snapshot_streams,
 };
 
 fn usage() {
     eprintln!(
-        "loudnessd [--config PATH] [--daemon | --list-streams]\n\n\
+        "loudnessd [--config PATH] [--daemon | --list-streams]\n\
+         loudnessd monitor [--duration SECONDS] [--interval MILLISECONDS] [--output PATH]\n\n\
          loudnessd msg status|status-json|reload|enable|disable|export\n\
          loudnessd msg set APP playback|capture on|off\n\
          loudnessd msg reset APP\n\n\
@@ -61,6 +63,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if all_arguments.first().map(String::as_str) == Some("msg") {
         let response = ipc::send(&ipc::default_socket_path()?, &all_arguments[1..])?;
         print!("{response}");
+        return Ok(());
+    }
+    if all_arguments.first().map(String::as_str) == Some("monitor") {
+        let options = parse_monitor_options(&all_arguments[1..])?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&monitor::run(&options)?)?
+        );
         return Ok(());
     }
     let mut config_path = None;
@@ -177,6 +187,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     Ok(())
+}
+
+fn parse_monitor_options(
+    arguments: &[String],
+) -> Result<MonitorOptions, Box<dyn std::error::Error>> {
+    let mut options = MonitorOptions::default();
+    let mut arguments = arguments.iter();
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--duration" => {
+                let seconds: u64 = arguments
+                    .next()
+                    .ok_or("--duration needs seconds")?
+                    .parse()?;
+                options.duration = std::time::Duration::from_secs(seconds);
+            }
+            "--interval" => {
+                let milliseconds: u64 = arguments
+                    .next()
+                    .ok_or("--interval needs milliseconds")?
+                    .parse()?;
+                options.interval = std::time::Duration::from_millis(milliseconds);
+            }
+            "--output" => {
+                options.output = Some(PathBuf::from(
+                    arguments.next().ok_or("--output needs a path")?,
+                ));
+            }
+            unknown => return Err(format!("unknown monitor argument: {unknown}").into()),
+        }
+    }
+    Ok(options)
 }
 
 #[cfg(test)]

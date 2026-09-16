@@ -132,6 +132,17 @@ It also includes the meter sequence, configured target, and gain-limit state so
 monitors can distinguish silence from a stalled audio callback and exclude
 clamped streams from convergence scoring.
 
+Run a bounded soak monitor and optionally retain its raw NDJSON observations:
+
+```console
+loudnessd monitor --duration 3600 --interval 1000 --output loudnessd-soak.ndjson
+```
+
+The final JSON summary reports IPC failures, unhealthy routes, stalled callback
+sequences, convergence within 1.5 LU for eligible observations, and maximum
+limiter reduction. The NDJSON contains status measurements and metadata only;
+it never contains audio samples.
+
 `disable` bypasses every active stream but leaves the daemon available.
 `reload` rereads the original `--config` path. `set` and `reset` are in-memory
 overlays and disappear when the daemon restarts.

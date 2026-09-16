@@ -5,6 +5,7 @@ pub mod daemon;
 pub mod gain;
 pub mod ipc;
 pub mod meter;
+pub mod monitor;
 pub mod pipewire_backend;
 pub mod pipewire_filter;
 pub mod pipewire_links;

@@ -18,9 +18,7 @@ use signal_hook::consts::signal::{SIGINT, SIGTERM};
 use crate::{
     ControllerBank, SignalDomain, UserConfig,
     ipc::{ControlServer, write_response},
-    pipewire_backend::{
-        DiscoveredStream, GraphState, PortDirection as GraphPortDirection, track_graph,
-    },
+    pipewire_backend::{DiscoveredStream, GraphState, track_graph},
     pipewire_filter::{ConnectedFilter, PortDirection, UnconnectedFilter},
     pipewire_links::OwnedLinks,
     pipewire_route_backend::PipewireRouteBackend,
@@ -33,10 +31,12 @@ use crate::{
 };
 
 mod command;
+mod discovery;
 mod recovery;
 mod reporting;
 
 use command::Command;
+use discovery::{ChannelReadiness, channel_readiness};
 
 const CONTROL_INTERVAL: Duration = Duration::from_millis(100);
 const PIPEWIRE_SAMPLE_RATE: u32 = 48_000;
@@ -275,8 +275,14 @@ impl Daemon {
                 self.skip_stream(&stream, "disabled by policy");
                 continue;
             }
-            let Some(channels) = self.ready_channels(&stream) else {
-                continue;
+            let readiness = channel_readiness(&stream, &self.graph.borrow());
+            let channels = match readiness {
+                ChannelReadiness::Pending => continue,
+                ChannelReadiness::Ready(channels) => channels,
+                ChannelReadiness::Skipped(reason) => {
+                    self.skip_stream(&stream, reason);
+                    continue;
+                }
             };
             match self.create_filter(&stream, &channels) {
                 Ok(filter) => {
@@ -303,42 +309,6 @@ impl Daemon {
                 }
             }
         }
-    }
-
-    fn ready_channels(&self, stream: &DiscoveredStream) -> Option<Vec<String>> {
-        let graph = self.graph.borrow();
-        let direction = match stream.domain {
-            SignalDomain::Playback => GraphPortDirection::Output,
-            SignalDomain::Capture => GraphPortDirection::Input,
-        };
-        let ports: Vec<_> = graph
-            .ports()
-            .filter(|port| port.node_id == stream.node_id && port.direction == direction)
-            .collect();
-        if ports.is_empty() {
-            return None;
-        }
-        let links: Vec<_> = graph.links().collect();
-        let mut channels = HashSet::new();
-        for port in ports {
-            let channel = port.channel.as_ref()?.clone();
-            if !channels.insert(channel) {
-                return None;
-            }
-            let route_count = links
-                .iter()
-                .filter(|link| match stream.domain {
-                    SignalDomain::Playback => link.output_port_id == port.port_id,
-                    SignalDomain::Capture => link.input_port_id == port.port_id,
-                })
-                .count();
-            if route_count != 1 {
-                return None;
-            }
-        }
-        let mut channels: Vec<_> = channels.into_iter().collect();
-        channels.sort();
-        Some(channels)
     }
 
     fn create_filter(

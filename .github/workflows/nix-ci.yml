@@ -1,0 +1,19 @@
+name: Nix CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  nix-ci:
+    uses: hermetic-foundation/.github/.github/workflows/nix-ci.yml@main
+    with:
+      publish_cache: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    secrets: inherit

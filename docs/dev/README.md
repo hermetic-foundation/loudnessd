@@ -102,7 +102,8 @@ replay the journal; it never reports a clean stop after losing route ownership.
 Restored lingering direct links retain a client proxy only while at least one of
 their server-side link IDs exists. The control loop prunes sets after PipeWire
 removes their globals, preventing repeated reloads or route moves from retaining
-stale proxies indefinitely.
+stale proxies indefinitely. Failed or unconfirmed multi-channel restoration
+explicitly destroys every partially created lingering global before returning.
 
 Before removing any original link, the daemon atomically records all direct
 endpoints in a mode-`0600` runtime journal. A restarted daemon validates that

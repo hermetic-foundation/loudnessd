@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use pipewire::{core::CoreRc, link::Link, properties::PropertiesBox, proxy::ProxyT};
+use pipewire::{
+    core::CoreRc, link::Link, properties::PropertiesBox, proxy::ProxyT, registry::RegistryRc,
+};
 
 use crate::routing::LinkSpec;
 
@@ -10,15 +12,20 @@ pub struct OwnedLinks {
 
 impl OwnedLinks {
     pub fn create(core: &CoreRc, specs: &[LinkSpec]) -> Result<Self, pipewire::Error> {
-        Self::create_with_linger(core, specs, false)
+        Self::create_with_linger(core, None, specs, false)
     }
 
-    pub fn create_lingering(core: &CoreRc, specs: &[LinkSpec]) -> Result<Self, pipewire::Error> {
-        Self::create_with_linger(core, specs, true)
+    pub fn create_lingering(
+        core: &CoreRc,
+        registry: &RegistryRc,
+        specs: &[LinkSpec],
+    ) -> Result<Self, pipewire::Error> {
+        Self::create_with_linger(core, Some(registry), specs, true)
     }
 
     fn create_with_linger(
         core: &CoreRc,
+        registry: Option<&RegistryRc>,
         specs: &[LinkSpec],
         linger: bool,
     ) -> Result<Self, pipewire::Error> {
@@ -30,7 +37,11 @@ impl OwnedLinks {
             match core.create_object::<Link>("link-factory", &properties) {
                 Ok(link) => owned.links.push(link),
                 Err(error) => {
-                    owned.destroy_all();
+                    if let Some(registry) = registry {
+                        owned.destroy_globals_in_place(registry);
+                    } else {
+                        owned.destroy_all();
+                    }
                     return Err(error);
                 }
             }
@@ -51,6 +62,17 @@ impl OwnedLinks {
     }
 
     pub fn destroy(mut self) {
+        self.destroy_all();
+    }
+
+    pub fn destroy_globals(mut self, registry: &RegistryRc) {
+        self.destroy_globals_in_place(registry);
+    }
+
+    fn destroy_globals_in_place(&mut self, registry: &RegistryRc) {
+        for id in self.ids().collect::<Vec<_>>() {
+            let _ = registry.destroy_global(id).into_result();
+        }
         self.destroy_all();
     }
 
@@ -234,7 +256,8 @@ mod tests {
         }
         assert!(!link_exists());
 
-        let lingering = OwnedLinks::create_lingering(&core, &[spec]).unwrap();
+        let registry = core.get_registry_rc().unwrap();
+        let lingering = OwnedLinks::create_lingering(&core, &registry, &[spec]).unwrap();
         roundtrip(&main_loop, &core);
         assert!(link_exists());
 

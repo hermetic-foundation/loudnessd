@@ -327,7 +327,7 @@ impl Daemon {
             self.clear_recovery_journal();
             return;
         }
-        match OwnedLinks::create_lingering(&self.core, &missing) {
+        match OwnedLinks::create_lingering(&self.core, &self.registry, &missing) {
             Ok(links) => {
                 let deadline = std::time::Instant::now() + Duration::from_secs(2);
                 while !missing.iter().all(|spec| {
@@ -353,10 +353,7 @@ impl Daemon {
                     self.clear_recovery_journal();
                 } else {
                     eprintln!("loudnessd: timed out restoring direct links after an unclean exit");
-                    for id in links.ids() {
-                        let _ = self.registry.destroy_global(id).into_result();
-                    }
-                    links.destroy();
+                    links.destroy_globals(&self.registry);
                 }
             }
             Err(error) => {

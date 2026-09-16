@@ -124,7 +124,7 @@ impl<'a> PipewireRouteBackend<'a> {
         linger: bool,
     ) -> Result<OwnedLinks, PipewireRouteError> {
         let links = if linger {
-            OwnedLinks::create_lingering(self.core, specs)
+            OwnedLinks::create_lingering(self.core, self.registry, specs)
         } else {
             OwnedLinks::create(self.core, specs)
         }
@@ -132,7 +132,11 @@ impl<'a> PipewireRouteBackend<'a> {
         if self.links_present(specs) {
             Ok(links)
         } else {
-            links.destroy();
+            if linger {
+                links.destroy_globals(self.registry);
+            } else {
+                links.destroy();
+            }
             Err(PipewireRouteError::ConfirmCreate)
         }
     }
@@ -206,10 +210,7 @@ impl RouteBackend for PipewireRouteBackend<'_> {
     }
 
     fn destroy_links(&mut self, links: Self::LinkSet) {
-        for id in links.ids() {
-            let _ = self.registry.destroy_global(id).into_result();
-        }
-        links.destroy();
+        links.destroy_globals(self.registry);
     }
 }
 

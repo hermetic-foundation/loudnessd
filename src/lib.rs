@@ -19,6 +19,7 @@ pub mod routing;
 pub mod runtime_config;
 pub mod status;
 pub mod stream_control;
+mod true_peak;
 
 pub use control::{
     ApplicationPolicy, ApplicationPolicyOverride, Controller, ControllerBank, ControllerConfig,

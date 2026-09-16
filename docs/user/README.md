@@ -4,8 +4,10 @@
 
 `loudnessd` is experimental. The daemon normalizes each application stream
 independently through transient PipeWire filters. Playback and capture have
-separate policy and controller state. A final linked-channel peak guard prevents
-normalization gain from clipping without replacing perceived-loudness control.
+separate policy and controller state. A final linked-channel BS.1770 true-peak
+limiter prevents normalization gain from clipping without replacing
+perceived-loudness control. Its fixed 10 ms lookahead is the processing latency
+added by each managed stream.
 
 ## Installation
 

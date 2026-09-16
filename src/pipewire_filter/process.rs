@@ -11,7 +11,7 @@ use pipewire::sys;
 
 use super::{MeterSnapshot, PortDirection};
 use crate::{
-    gain::{GainStage, PeakLimiter},
+    gain::{GainStage, TruePeakLimiter},
     meter::{LoudnessMeter, MeterReading},
 };
 
@@ -22,7 +22,7 @@ pub(super) struct FilterCallbackData {
     target_gain_bits: AtomicU32,
     meter: Option<MeterState>,
     latest_metrics: PublishedMetrics,
-    limiter: PeakLimiter,
+    limiter: Option<TruePeakLimiter>,
     maximum_limiter_reduction_db: f32,
 }
 
@@ -40,7 +40,7 @@ impl Default for FilterCallbackData {
             target_gain_bits: AtomicU32::new(0.0_f32.to_bits()),
             meter: None,
             latest_metrics: PublishedMetrics::default(),
-            limiter: PeakLimiter::default(),
+            limiter: None,
             maximum_limiter_reduction_db: 0.0,
         }
     }
@@ -68,12 +68,17 @@ impl FilterCallbackData {
             .filter(|port| port.direction == PortDirection::Input)
             .map(|port| meter_channel(&port.channel))
             .collect();
+        let channel_count = channels.len();
         self.meter = Some(MeterState {
             sample_rate,
             source: LoudnessMeter::new(sample_rate, &channels)?,
             output: LoudnessMeter::new(sample_rate, &channels)?,
             channels,
         });
+        self.limiter = Some(
+            TruePeakLimiter::new(-1.0, 0.1, channel_count, sample_rate)
+                .expect("the built-in true-peak limiter settings are valid"),
+        );
         Ok(())
     }
 
@@ -293,7 +298,7 @@ pub(super) unsafe extern "C" fn callback(
             );
         }
     }
-    let limiter_reduction_db = limit_output_ports(data, &buffers, sample_count, sample_rate);
+    let limiter_reduction_db = limit_output_ports(data, &buffers, sample_count);
     data.maximum_limiter_reduction_db = data.maximum_limiter_reduction_db.max(limiter_reduction_db);
     let output_reading = meter_ports(
         data,
@@ -316,9 +321,8 @@ fn limit_output_ports(
     data: &mut FilterCallbackData,
     buffers: &CycleBuffers,
     sample_count: u32,
-    sample_rate: Option<u32>,
 ) -> f32 {
-    let Some(sample_rate) = sample_rate else {
+    let Some(limiter) = data.limiter.as_mut() else {
         return 0.0;
     };
     let mut outputs = [std::ptr::null_mut(); MAX_METER_CHANNELS];
@@ -336,18 +340,27 @@ fn limit_output_ports(
         outputs[output_count] = output.as_ptr();
         output_count += 1;
     }
+    if output_count != limiter.channel_count() {
+        return 0.0;
+    }
     let mut minimum_limiter_gain = 1.0_f32;
+    let mut input_frame = [0.0; MAX_METER_CHANNELS];
+    let mut output_frame = [0.0; MAX_METER_CHANNELS];
     for sample_index in 0..sample_count as usize {
-        let peak = outputs[..output_count]
-            .iter()
+        for (channel, output) in outputs[..output_count].iter().enumerate() {
             // Every pointer was validated above for a buffer of sample_count samples.
-            .map(|output| unsafe { *output.add(sample_index) }.abs())
-            .fold(0.0_f32, f32::max);
-        let limiter_gain = data.limiter.gain_for_peak(peak, sample_rate);
+            input_frame[channel] = unsafe { *output.add(sample_index) };
+        }
+        let limiter_gain = limiter
+            .process_frame(
+                &input_frame[..output_count],
+                &mut output_frame[..output_count],
+            )
+            .expect("the output layout was validated before processing");
         minimum_limiter_gain = minimum_limiter_gain.min(limiter_gain);
-        for output in &outputs[..output_count] {
+        for (channel, output) in outputs[..output_count].iter().enumerate() {
             // Every pointer was validated above for a buffer of sample_count samples.
-            unsafe { *output.add(sample_index) *= limiter_gain };
+            unsafe { *output.add(sample_index) = output_frame[channel] };
         }
     }
     if minimum_limiter_gain > 0.0 {

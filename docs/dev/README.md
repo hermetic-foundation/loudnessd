@@ -31,8 +31,11 @@ The daemon uses native PipeWire filters rather than recording monitor streams
 through PulseAudio compatibility APIs. One shared PipeWire core owns registry
 tracking, transient links, and per-stream filters. Each filter measures its
 pre-gain signal, applies a smoothly changing normalization gain, and finishes
-with a linked-channel `-1 dBFS` peak guard. The guard has immediate attack and
-a smooth release, preserving stereo balance.
+with a linked-channel `-1 dBTP` guard. The guard uses the BS.1770 four-times
+oversampled detector, a fixed 10 ms lookahead, immediate attenuation, and a
+smooth release. Its peak window and sample delay are allocated before the
+filter becomes active, so the real-time callback does not allocate. One linked
+gain preserves stereo balance.
 
 Route installation is transactional: create and confirm replacement links,
 remove the original direct links, then activate the filter. Failure restores

@@ -33,6 +33,10 @@ use crate::{
     stream_control::StreamControl,
 };
 
+mod command;
+
+use command::Command;
+
 const CONTROL_INTERVAL: Duration = Duration::from_millis(100);
 const PIPEWIRE_SAMPLE_RATE: u32 = 48_000;
 
@@ -95,13 +99,12 @@ impl Daemon {
     }
 
     fn handle_request(&mut self, request: &str) -> Result<String, String> {
-        let fields: Vec<_> = request.split('\t').collect();
-        match fields.as_slice() {
-            ["status"] => Ok(self.status().to_text()),
-            ["status-json"] => {
+        match command::parse(request)? {
+            Command::Status => Ok(self.status().to_text()),
+            Command::StatusJson => {
                 serde_json::to_string(&self.status()).map_err(|error| error.to_string())
             }
-            ["reload"] => {
+            Command::Reload => {
                 let source = std::fs::read_to_string(&self.config_path)
                     .map_err(|error| error.to_string())?;
                 let baseline = UserConfig::from_toml(&source).map_err(|error| error.to_string())?;
@@ -110,12 +113,12 @@ impl Daemon {
                 self.reconfigure(next)?;
                 Ok("ok\n".to_owned())
             }
-            ["enable"] => {
+            Command::Enable => {
                 self.enabled = true;
                 self.unsupported.clear();
                 Ok("ok\n".to_owned())
             }
-            ["disable"] => {
+            Command::Disable => {
                 self.enabled = false;
                 if self.bypass_all() {
                     Ok("ok\n".to_owned())
@@ -124,25 +127,26 @@ impl Daemon {
                     Err("could not bypass every stream; normalization remains enabled".to_owned())
                 }
             }
-            ["set", application_id, domain, enabled] => {
-                let domain = parse_domain(domain)?;
-                let enabled = parse_enabled(enabled)?;
+            Command::Set {
+                application_id,
+                domain,
+                enabled,
+            } => {
                 let mut next = self.runtime_config.clone();
-                next.set(*application_id, domain, enabled);
+                next.set(application_id, domain, enabled);
                 self.reconfigure(next)?;
                 Ok("ok\n".to_owned())
             }
-            ["reset", application_id] => {
+            Command::Reset { application_id } => {
                 let mut next = self.runtime_config.clone();
-                next.reset(application_id);
+                next.reset(&application_id);
                 self.reconfigure(next)?;
                 Ok("ok\n".to_owned())
             }
-            ["export"] => self
+            Command::Export => self
                 .runtime_config
                 .export_toml()
                 .map_err(|error| error.to_string()),
-            _ => Err("usage: loudnessd msg status|status-json|reload|enable|disable|set APP playback|capture on|off|reset APP|export".to_owned()),
         }
     }
 
@@ -729,22 +733,6 @@ fn route_status(health: RouteHealth) -> RouteStatus {
         RouteHealth::Healthy => RouteStatus::Healthy,
         RouteHealth::Superseded => RouteStatus::Superseded,
         RouteHealth::Broken => RouteStatus::Broken,
-    }
-}
-
-fn parse_domain(value: &str) -> Result<SignalDomain, String> {
-    match value {
-        "playback" => Ok(SignalDomain::Playback),
-        "capture" => Ok(SignalDomain::Capture),
-        _ => Err(format!("unknown direction: {value}")),
-    }
-}
-
-fn parse_enabled(value: &str) -> Result<bool, String> {
-    match value {
-        "on" | "true" => Ok(true),
-        "off" | "false" => Ok(false),
-        _ => Err(format!("expected on or off, got: {value}")),
     }
 }
 

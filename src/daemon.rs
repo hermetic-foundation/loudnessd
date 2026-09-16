@@ -101,12 +101,41 @@ impl Daemon {
                     .values()
                     .filter(|stream| matches!(stream, ManagedStream::Active { .. }))
                     .count();
-                Ok(format!(
+                let mut lines = vec![format!(
                     "enabled={} managed={} active={}\n",
                     self.enabled,
                     self.managed.len(),
                     active
-                ))
+                )];
+                let mut streams: Vec<_> = self.managed.iter().collect();
+                streams.sort_by_key(|(node_id, _)| **node_id);
+                for (node_id, managed) in streams {
+                    let (state, control) = match managed {
+                        ManagedStream::Connecting { control, .. } => ("connecting", control),
+                        ManagedStream::Active { control, .. } => ("active", control),
+                    };
+                    let domain = domain_name(control.domain());
+                    if let Some(update) = control.last_update() {
+                        lines.push(format!(
+                            "stream={} domain={} application={} state={} lufs={:.2} gain_db={:.2}\n",
+                            node_id,
+                            domain,
+                            control.application_id(),
+                            state,
+                            update.loudness_lufs,
+                            update.decision.target_gain_db(),
+                        ));
+                    } else {
+                        lines.push(format!(
+                            "stream={} domain={} application={} state={} lufs=unavailable gain_db=0.00\n",
+                            node_id,
+                            domain,
+                            control.application_id(),
+                            state,
+                        ));
+                    }
+                }
+                Ok(lines.concat())
             }
             ["reload"] => {
                 let source = std::fs::read_to_string(&self.config_path)

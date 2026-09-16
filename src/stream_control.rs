@@ -23,6 +23,7 @@ impl NormalizationEndpoint for ConnectedFilter {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ControlUpdate {
     pub sequence: u64,
+    pub loudness_lufs: f32,
     pub decision: Decision,
 }
 
@@ -32,6 +33,7 @@ pub struct StreamControl {
     application_id: String,
     stream_id: String,
     last_sequence: Option<u64>,
+    last_update: Option<ControlUpdate>,
 }
 
 impl StreamControl {
@@ -45,7 +47,24 @@ impl StreamControl {
             application_id: application_id.into(),
             stream_id: stream_id.into(),
             last_sequence: None,
+            last_update: None,
         }
+    }
+
+    pub fn domain(&self) -> SignalDomain {
+        self.domain
+    }
+
+    pub fn application_id(&self) -> &str {
+        &self.application_id
+    }
+
+    pub fn stream_id(&self) -> &str {
+        &self.stream_id
+    }
+
+    pub fn last_update(&self) -> Option<ControlUpdate> {
+        self.last_update
     }
 
     pub fn update<E: NormalizationEndpoint>(
@@ -72,10 +91,13 @@ impl StreamControl {
         );
         endpoint.set_target_gain_db(decision.target_gain_db())?;
         self.last_sequence = Some(snapshot.sequence);
-        Ok(Some(ControlUpdate {
+        let update = ControlUpdate {
             sequence: snapshot.sequence,
+            loudness_lufs: snapshot.loudness_lufs,
             decision,
-        }))
+        };
+        self.last_update = Some(update);
+        Ok(Some(update))
     }
 }
 
@@ -119,7 +141,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(update.sequence, 1);
+        assert_eq!(update.loudness_lufs, -23.0);
         assert_eq!(endpoint.target_gain_db.get(), 1.0);
+        assert_eq!(control.domain(), SignalDomain::Playback);
+        assert_eq!(control.application_id(), "player");
+        assert_eq!(control.stream_id(), "stream-1");
+        assert_eq!(control.last_update(), Some(update));
         assert_eq!(
             control.update(&endpoint, &mut controllers, 1.0).unwrap(),
             None

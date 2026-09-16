@@ -37,6 +37,14 @@ smooth release. Its peak window and sample delay are allocated before the
 filter becomes active, so the real-time callback does not allocate. One linked
 gain preserves stereo balance.
 
+Loudness meters and limiter state for 22.05, 32, 44.1, 48, 88.2, 96, and
+192 kHz are constructed before a filter becomes active. These are the rates
+supported by the current meter backend. A graph-rate switch resets and selects
+one of those retained states; the process callback never constructs or drops
+DSP state. Another graph rate, including 176.4 kHz, fails open by slewing
+normalization to unity and bypassing metering and limiting rather than
+allocating on the real-time thread.
+
 Route installation is transactional: create and confirm replacement links,
 remove the original direct links, then activate the filter. Failure restores
 the direct route and releases replacement links. Shutdown performs the inverse

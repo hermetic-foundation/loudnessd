@@ -148,6 +148,15 @@ impl TruePeakLimiter {
         self.lookahead_frames
     }
 
+    pub fn reset(&mut self) {
+        self.detector.reset();
+        self.delay.fill(0.0);
+        self.peak_window.clear();
+        self.write_frame = 0;
+        self.sequence = 0;
+        self.gain = 1.0;
+    }
+
     pub fn process_frame(
         &mut self,
         input: &[f32],
@@ -409,5 +418,19 @@ mod tests {
         assert!(TruePeakLimiter::new(-1.0, 0.0, 2, 48_000).is_err());
         assert!(TruePeakLimiter::new(-1.0, 0.1, 0, 48_000).is_err());
         assert!(TruePeakLimiter::new(-1.0, 0.1, 2, 0).is_err());
+    }
+
+    #[test]
+    fn limiter_reset_discards_delay_and_gain_history() {
+        let mut limiter = TruePeakLimiter::new(-1.0, 0.1, 1, 1_000).unwrap();
+        let mut output = [0.0];
+        for _ in 0..32 {
+            limiter.process_frame(&[2.0], &mut output).unwrap();
+        }
+        limiter.reset();
+
+        let gain = limiter.process_frame(&[0.0], &mut output).unwrap();
+        assert_eq!(gain, 1.0);
+        assert_eq!(output, [0.0]);
     }
 }

@@ -54,6 +54,11 @@ impl Default for ChannelState {
 }
 
 impl ChannelState {
+    fn reset(&mut self) {
+        self.delay.fill(0.0);
+        self.write_index = 0;
+    }
+
     #[inline]
     fn push(&mut self, sample: f32) -> f32 {
         self.delay[self.write_index] = sample;
@@ -91,6 +96,12 @@ impl TruePeakDetector {
 
     pub(crate) fn channel_count(&self) -> usize {
         self.channels.len()
+    }
+
+    pub(crate) fn reset(&mut self) {
+        for channel in &mut self.channels {
+            channel.reset();
+        }
     }
 
     /// Returns the largest raw or four-times-oversampled value produced by the
@@ -158,5 +169,16 @@ mod tests {
         }
 
         assert!((settled_peak - 1.0).abs() < 0.01, "got {settled_peak}");
+    }
+
+    #[test]
+    fn reset_discards_filter_history() {
+        let mut detector = TruePeakDetector::new(1).unwrap();
+        for _ in 0..32 {
+            detector.push_frame(&[1.0]).unwrap();
+        }
+        detector.reset();
+
+        assert_eq!(detector.push_frame(&[0.0]).unwrap(), 0.0);
     }
 }

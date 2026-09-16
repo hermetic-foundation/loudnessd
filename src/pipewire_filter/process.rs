@@ -16,21 +16,41 @@ use crate::{
 };
 
 const MAX_METER_CHANNELS: usize = 64;
+const PREPARED_SAMPLE_RATES: [u32; 7] = [22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 192_000];
 
 pub(super) struct FilterCallbackData {
     ports: Vec<CallbackPort>,
     target_gain_bits: AtomicU32,
-    meter: Option<MeterState>,
+    default_sample_rate: Option<u32>,
+    processing_states: Vec<ProcessingState>,
+    active_processing_state: Option<usize>,
     latest_metrics: PublishedMetrics,
-    limiter: Option<TruePeakLimiter>,
     maximum_limiter_reduction_db: f32,
 }
 
-struct MeterState {
+struct ProcessingState {
     sample_rate: u32,
-    channels: Vec<Channel>,
     source: LoudnessMeter,
     output: LoudnessMeter,
+    limiter: TruePeakLimiter,
+}
+
+impl ProcessingState {
+    fn new(sample_rate: u32, channels: &[Channel]) -> Result<Self, ebur128_stream::Error> {
+        Ok(Self {
+            sample_rate,
+            source: LoudnessMeter::new(sample_rate, channels)?,
+            output: LoudnessMeter::new(sample_rate, channels)?,
+            limiter: TruePeakLimiter::new(-1.0, 0.1, channels.len(), sample_rate)
+                .expect("the built-in true-peak limiter settings are valid"),
+        })
+    }
+
+    fn reset(&mut self) {
+        self.source.reset();
+        self.output.reset();
+        self.limiter.reset();
+    }
 }
 
 impl Default for FilterCallbackData {
@@ -38,9 +58,10 @@ impl Default for FilterCallbackData {
         Self {
             ports: Vec::new(),
             target_gain_bits: AtomicU32::new(0.0_f32.to_bits()),
-            meter: None,
+            default_sample_rate: None,
+            processing_states: Vec::new(),
+            active_processing_state: None,
             latest_metrics: PublishedMetrics::default(),
-            limiter: None,
             maximum_limiter_reduction_db: 0.0,
         }
     }
@@ -68,17 +89,19 @@ impl FilterCallbackData {
             .filter(|port| port.direction == PortDirection::Input)
             .map(|port| meter_channel(&port.channel))
             .collect();
-        let channel_count = channels.len();
-        self.meter = Some(MeterState {
-            sample_rate,
-            source: LoudnessMeter::new(sample_rate, &channels)?,
-            output: LoudnessMeter::new(sample_rate, &channels)?,
-            channels,
-        });
-        self.limiter = Some(
-            TruePeakLimiter::new(-1.0, 0.1, channel_count, sample_rate)
-                .expect("the built-in true-peak limiter settings are valid"),
+        let mut sample_rates = Vec::with_capacity(PREPARED_SAMPLE_RATES.len() + 1);
+        sample_rates.push(sample_rate);
+        sample_rates.extend(
+            PREPARED_SAMPLE_RATES
+                .into_iter()
+                .filter(|prepared| *prepared != sample_rate),
         );
+        self.processing_states = sample_rates
+            .into_iter()
+            .map(|rate| ProcessingState::new(rate, &channels))
+            .collect::<Result<_, _>>()?;
+        self.default_sample_rate = Some(sample_rate);
+        self.active_processing_state = None;
         Ok(())
     }
 
@@ -256,18 +279,27 @@ pub(super) unsafe extern "C" fn callback(
         return;
     };
 
-    let sample_rate =
-        process_sample_rate(position, data.meter.as_ref().map(|meter| meter.sample_rate));
-    prepare_meters(data, sample_rate);
-    let source_reading = meter_ports(
-        data,
-        &buffers,
-        sample_count,
-        PortDirection::Input,
-        MeterKind::Source,
-    );
+    let sample_rate = process_sample_rate(position, data.default_sample_rate);
+    let processing_state = processing_state_index(&data.processing_states, sample_rate);
+    if data.active_processing_state != processing_state {
+        if let Some(index) = processing_state {
+            data.processing_states[index].reset();
+        }
+        data.active_processing_state = processing_state;
+    }
+    let source_reading = processing_state.and_then(|index| {
+        meter_ports(
+            &mut data.processing_states[index].source,
+            &data.ports,
+            &buffers,
+            sample_count,
+            PortDirection::Input,
+        )
+    });
 
-    let target_gain_db = f32::from_bits(data.target_gain_bits.load(Ordering::Relaxed));
+    let target_gain_db = processing_state.map_or(0.0, |_| {
+        f32::from_bits(data.target_gain_bits.load(Ordering::Relaxed))
+    });
     for output_index in 0..data.ports.len() {
         if data.ports[output_index].direction != PortDirection::Output {
             continue;
@@ -298,15 +330,24 @@ pub(super) unsafe extern "C" fn callback(
             );
         }
     }
-    let limiter_reduction_db = limit_output_ports(data, &buffers, sample_count);
+    let limiter_reduction_db = processing_state.map_or(0.0, |index| {
+        limit_output_ports(
+            &mut data.processing_states[index].limiter,
+            &data.ports,
+            &buffers,
+            sample_count,
+        )
+    });
     data.maximum_limiter_reduction_db = data.maximum_limiter_reduction_db.max(limiter_reduction_db);
-    let output_reading = meter_ports(
-        data,
-        &buffers,
-        sample_count,
-        PortDirection::Output,
-        MeterKind::Output,
-    );
+    let output_reading = processing_state.and_then(|index| {
+        meter_ports(
+            &mut data.processing_states[index].output,
+            &data.ports,
+            &buffers,
+            sample_count,
+            PortDirection::Output,
+        )
+    });
     if let Some(source) = source_reading {
         data.latest_metrics.publish(ProcessMetrics {
             source,
@@ -318,16 +359,14 @@ pub(super) unsafe extern "C" fn callback(
 }
 
 fn limit_output_ports(
-    data: &mut FilterCallbackData,
+    limiter: &mut TruePeakLimiter,
+    ports: &[CallbackPort],
     buffers: &CycleBuffers,
     sample_count: u32,
 ) -> f32 {
-    let Some(limiter) = data.limiter.as_mut() else {
-        return 0.0;
-    };
     let mut outputs = [std::ptr::null_mut(); MAX_METER_CHANNELS];
     let mut output_count = 0;
-    for (index, port) in data.ports.iter().enumerate() {
+    for (index, port) in ports.iter().enumerate() {
         if port.direction != PortDirection::Output {
             continue;
         }
@@ -381,44 +420,23 @@ pub(super) fn process_sample_rate(
     rate.denom.checked_div(rate.num).filter(|rate| *rate > 0)
 }
 
-#[derive(Clone, Copy)]
-enum MeterKind {
-    Source,
-    Output,
-}
-
-fn prepare_meters(data: &mut FilterCallbackData, sample_rate: Option<u32>) {
-    let Some(sample_rate) = sample_rate else {
-        return;
-    };
-    let Some(meter) = data.meter.as_mut() else {
-        return;
-    };
-    if meter.sample_rate == sample_rate {
-        return;
-    }
-    let (Ok(source), Ok(output)) = (
-        LoudnessMeter::new(sample_rate, &meter.channels),
-        LoudnessMeter::new(sample_rate, &meter.channels),
-    ) else {
-        return;
-    };
-    meter.sample_rate = sample_rate;
-    meter.source = source;
-    meter.output = output;
+fn processing_state_index(states: &[ProcessingState], sample_rate: Option<u32>) -> Option<usize> {
+    let sample_rate = sample_rate?;
+    states
+        .iter()
+        .position(|state| state.sample_rate == sample_rate)
 }
 
 fn meter_ports(
-    data: &mut FilterCallbackData,
+    meter: &mut LoudnessMeter,
+    ports: &[CallbackPort],
     buffers: &CycleBuffers,
     sample_count: u32,
     direction: PortDirection,
-    kind: MeterKind,
 ) -> Option<MeterReading> {
-    let meter = data.meter.as_mut()?;
     let mut channels = [&[][..]; MAX_METER_CHANNELS];
     let mut channel_count = 0;
-    for (index, port) in data.ports.iter().enumerate() {
+    for (index, port) in ports.iter().enumerate() {
         if port.direction != direction {
             continue;
         }
@@ -436,12 +454,7 @@ fn meter_ports(
         return None;
     }
 
-    match kind {
-        MeterKind::Source => meter.source.push_planar(&channels[..channel_count]),
-        MeterKind::Output => meter.output.push_planar(&channels[..channel_count]),
-    }
-    .ok()
-    .flatten()
+    meter.push_planar(&channels[..channel_count]).ok().flatten()
 }
 
 pub(super) unsafe fn process_mono_buffers(
@@ -489,4 +502,54 @@ pub(super) fn target_gain_bits(target_gain_db: f32) -> Result<u32, &'static str>
         .is_finite()
         .then(|| target_gain_db.to_bits())
         .ok_or("target gain must be finite")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn callback_data_with_stereo_ports() -> FilterCallbackData {
+        let mut data = FilterCallbackData::default();
+        let pointer = NonNull::<u8>::dangling().cast();
+        for channel in ["FL", "FR"] {
+            data.add_port(pointer, PortDirection::Input, channel.to_owned());
+            data.add_port(pointer, PortDirection::Output, channel.to_owned());
+        }
+        data
+    }
+
+    #[test]
+    fn meter_setup_prepares_standard_pipewire_rates_before_processing() {
+        let mut data = callback_data_with_stereo_ports();
+        data.enable_meter(48_000).unwrap();
+
+        let rates: Vec<_> = data
+            .processing_states
+            .iter()
+            .map(|state| state.sample_rate)
+            .collect();
+        assert_eq!(
+            rates,
+            [48_000, 22_050, 32_000, 44_100, 88_200, 96_000, 192_000]
+        );
+        assert_eq!(data.default_sample_rate, Some(48_000));
+        assert_eq!(data.active_processing_state, None);
+    }
+
+    #[test]
+    fn unsupported_graph_rates_select_no_processing_state() {
+        let mut data = callback_data_with_stereo_ports();
+        data.enable_meter(48_000).unwrap();
+
+        assert_eq!(
+            processing_state_index(&data.processing_states, Some(44_100))
+                .map(|index| data.processing_states[index].sample_rate),
+            Some(44_100)
+        );
+        assert_eq!(
+            processing_state_index(&data.processing_states, Some(176_400)),
+            None
+        );
+        assert_eq!(processing_state_index(&data.processing_states, None), None);
+    }
 }

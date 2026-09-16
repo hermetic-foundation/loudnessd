@@ -34,6 +34,10 @@ impl LoudnessMeter {
         Ok(self.reading())
     }
 
+    pub fn reset(&mut self) {
+        self.analyzer.reset();
+    }
+
     fn reading(&mut self) -> Option<MeterReading> {
         let snapshot = self.analyzer.snapshot();
         let short_term = snapshot.short_term_lufs();
@@ -104,5 +108,15 @@ mod tests {
         let planar_reading = planar_meter.push_planar(&[&left, &right]).unwrap().unwrap();
 
         assert_eq!(planar_reading, interleaved_reading);
+    }
+
+    #[test]
+    fn reset_discards_program_history() {
+        let samples = stereo_sine(48_000, 4, 0.1);
+        let mut meter = LoudnessMeter::new(48_000, &[Channel::Left, Channel::Right]).unwrap();
+        assert!(meter.push_interleaved(&samples).unwrap().is_some());
+        meter.reset();
+
+        assert_eq!(meter.push_interleaved(&[0.0; 128]).unwrap(), None);
     }
 }

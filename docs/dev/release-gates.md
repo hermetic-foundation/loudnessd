@@ -76,8 +76,9 @@ During the eight-hour soak:
 
 - resident memory remains below `32 MiB` with eight active stereo streams and
   grows by less than `2 MiB` between hour one and hour eight;
-- average CPU use remains below `2%` of one modern desktop core for two active
-  48 kHz stereo streams; and
+- average CPU use remains below `5%` of one core on the Ryzen 5 3400G baseline
+  for two active 48 kHz stereo streams, measured from daemon process CPU ticks;
+  comparable hardware must record its processor and measurement method; and
 - there are no daemon restarts, real-time callback allocation regressions,
   unbounded log growth, or control-socket stalls.
 

@@ -99,6 +99,10 @@ entry instead of dropping the only working route. A failed runtime disable or
 configuration change reports an error and keeps normalization enabled. A failed
 shutdown returns an error so the service manager can restart the daemon and
 replay the journal; it never reports a clean stop after losing route ownership.
+Restored lingering direct links retain a client proxy only while at least one of
+their server-side link IDs exists. The control loop prunes sets after PipeWire
+removes their globals, preventing repeated reloads or route moves from retaining
+stale proxies indefinitely.
 
 Before removing any original link, the daemon atomically records all direct
 endpoints in a mode-`0600` runtime journal. A restarted daemon validates that

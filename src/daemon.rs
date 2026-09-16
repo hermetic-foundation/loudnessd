@@ -72,6 +72,7 @@ struct Daemon {
 impl Daemon {
     fn tick(&mut self) {
         self.remove_disappeared_streams();
+        self.prune_retained_direct_links();
         self.reconcile_routes();
         self.discover_streams();
         self.connect_pending_filters();
@@ -239,6 +240,12 @@ impl Daemon {
         if self.managed.len() != previous_count {
             self.sync_recovery_journal(None);
         }
+    }
+
+    fn prune_retained_direct_links(&mut self) {
+        let graph = self.graph.borrow();
+        self.retained_direct_links
+            .retain(|links| links.ids().any(|id| graph.contains_link_id(id)));
     }
 
     fn direct_specs(

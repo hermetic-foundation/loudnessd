@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires a live PipeWire user session"]
-    fn live_owned_link_connects_only_disposable_filters_and_cleans_up() {
+    fn live_link_lifetimes_match_the_linger_policy() {
         let main_loop = pipewire::main_loop::MainLoopRc::new(None).unwrap();
         let context = pipewire::context::ContextRc::new(&main_loop, None).unwrap();
         let core = context.connect_rc(None).unwrap();
@@ -225,6 +225,25 @@ mod tests {
         assert!(link_exists());
 
         links.destroy();
+        roundtrip(&main_loop, &core);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while link_exists() && Instant::now() < deadline {
+            main_loop
+                .loop_()
+                .iterate(Timeout::Finite(Duration::from_millis(20)));
+        }
+        assert!(!link_exists());
+
+        let lingering = OwnedLinks::create_lingering(&core, &[spec]).unwrap();
+        roundtrip(&main_loop, &core);
+        assert!(link_exists());
+
+        drop(lingering);
+        roundtrip(&main_loop, &core);
+        assert!(link_exists());
+
+        drop(producer);
+        drop(consumer);
         roundtrip(&main_loop, &core);
         let deadline = Instant::now() + Duration::from_secs(2);
         while link_exists() && Instant::now() < deadline {

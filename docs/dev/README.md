@@ -2,6 +2,7 @@
 
 The measurable criteria for promoting a build beyond experimental status are
 defined in the [release gates](release-gates.md).
+Live test records are kept as dated reports under [`validation/`](validation/).
 
 ## Architecture
 

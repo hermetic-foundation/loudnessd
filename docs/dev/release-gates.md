@@ -19,6 +19,9 @@ lifecycle behavior depend on a live PipeWire graph.
 
 - An eight-hour soak with at least two simultaneous stereo streams completes
   without an unexpected silence interval longer than two graph quanta.
+- The soak starts monitoring only after every intended stream is active, passes
+  that count through `--expect-active`, and reports zero
+  `active_stream_shortfall_observations`.
 - The soak includes continuous music, speech, intermittent browser audio,
   silence, and content that reaches both boost and cut paths.
 - For non-silent windows that are not gain-clamped or limiter-bound, at least

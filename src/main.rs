@@ -15,7 +15,7 @@ use loudnessd::{
 fn usage() {
     eprintln!(
         "loudnessd [--config PATH] [--daemon | --list-streams]\n\
-         loudnessd monitor [--duration SECONDS] [--interval MILLISECONDS] [--output PATH]\n\n\
+         loudnessd monitor [--duration SECONDS] [--interval MILLISECONDS] [--output PATH] [--expect-active COUNT]\n\n\
          loudnessd msg status|status-json|reload|enable|disable|export\n\
          loudnessd msg set APP playback|capture on|off\n\
          loudnessd msg reset APP\n\n\
@@ -215,6 +215,16 @@ fn parse_monitor_options(
                     arguments.next().ok_or("--output needs a path")?,
                 ));
             }
+            "--expect-active" => {
+                let count: usize = arguments
+                    .next()
+                    .ok_or("--expect-active needs a count")?
+                    .parse()?;
+                if count == 0 {
+                    return Err("--expect-active must be greater than zero".into());
+                }
+                options.expected_active_streams = Some(count);
+            }
             unknown => return Err(format!("unknown monitor argument: {unknown}").into()),
         }
     }
@@ -259,5 +269,30 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "existing = true\n");
 
         std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn parses_expected_active_stream_count() {
+        let options = parse_monitor_options(&[
+            "--duration".to_owned(),
+            "60".to_owned(),
+            "--expect-active".to_owned(),
+            "8".to_owned(),
+        ])
+        .unwrap();
+
+        assert_eq!(options.duration, std::time::Duration::from_secs(60));
+        assert_eq!(options.expected_active_streams, Some(8));
+    }
+
+    #[test]
+    fn rejects_zero_expected_active_streams() {
+        let error =
+            parse_monitor_options(&["--expect-active".to_owned(), "0".to_owned()]).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "--expect-active must be greater than zero"
+        );
     }
 }

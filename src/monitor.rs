@@ -24,6 +24,7 @@ pub struct MonitorOptions {
     pub duration: Duration,
     pub interval: Duration,
     pub output: Option<PathBuf>,
+    pub expected_active_streams: Option<usize>,
 }
 
 impl Default for MonitorOptions {
@@ -32,6 +33,7 @@ impl Default for MonitorOptions {
             duration: Duration::from_secs(300),
             interval: Duration::from_secs(1),
             output: None,
+            expected_active_streams: None,
         }
     }
 }
@@ -42,6 +44,10 @@ pub struct SoakReport {
     pub samples: u64,
     pub ipc_failures: u64,
     pub daemon_restarts: u64,
+    pub expected_active_streams: Option<usize>,
+    pub minimum_active_streams: Option<usize>,
+    pub maximum_active_streams: Option<usize>,
+    pub active_stream_shortfall_observations: u64,
     pub unhealthy_route_observations: u64,
     pub stalled_callback_observations: u64,
     pub converging_observations: u64,
@@ -79,8 +85,37 @@ struct ProcessSample {
 }
 
 impl SoakAccumulator {
+    fn new(expected_active_streams: Option<usize>) -> Self {
+        Self {
+            report: SoakReport {
+                expected_active_streams,
+                ..SoakReport::default()
+            },
+            ..Self::default()
+        }
+    }
+
     fn observe(&mut self, status: &DaemonStatus) {
         self.report.samples += 1;
+        self.report.minimum_active_streams = Some(
+            self.report
+                .minimum_active_streams
+                .unwrap_or(status.active)
+                .min(status.active),
+        );
+        self.report.maximum_active_streams = Some(
+            self.report
+                .maximum_active_streams
+                .unwrap_or(status.active)
+                .max(status.active),
+        );
+        if self
+            .report
+            .expected_active_streams
+            .is_some_and(|expected| status.active < expected)
+        {
+            self.report.active_stream_shortfall_observations += 1;
+        }
         if let Some(process) = &status.process {
             self.report
                 .initial_rss_bytes
@@ -186,7 +221,7 @@ pub fn run(options: &MonitorOptions) -> Result<SoakReport, Box<dyn Error>> {
         None => Box::new(io::sink()),
     };
     let started = Instant::now();
-    let mut accumulator = SoakAccumulator::default();
+    let mut accumulator = SoakAccumulator::new(options.expected_active_streams);
 
     while started.elapsed() < options.duration {
         let elapsed = started.elapsed();
@@ -272,6 +307,8 @@ mod tests {
         let report = accumulator.finish(Duration::from_secs(3));
         assert_eq!(report.samples, 3);
         assert_eq!(report.daemon_restarts, 0);
+        assert_eq!(report.minimum_active_streams, Some(1));
+        assert_eq!(report.maximum_active_streams, Some(1));
         assert_eq!(report.stalled_callback_observations, 1);
         assert_eq!(report.convergence_eligible_observations, 3);
         assert_eq!(report.convergence_passing_observations, 2);
@@ -281,6 +318,26 @@ mod tests {
         assert_eq!(report.final_rss_bytes, Some(2_002_000));
         assert_eq!(report.rss_growth_bytes, Some(1000));
         assert_eq!(report.average_cpu_percent, Some(5.0));
+    }
+
+    #[test]
+    fn reports_active_stream_shortfalls() {
+        let mut accumulator = SoakAccumulator::new(Some(2));
+        accumulator.observe(&status(1, -13.0));
+        let mut complete = status(2, -13.0);
+        complete.managed = 2;
+        complete.active = 2;
+        complete.streams.push(StreamStatus {
+            node_id: 10,
+            ..complete.streams[0].clone()
+        });
+        accumulator.observe(&complete);
+
+        let report = accumulator.finish(Duration::from_secs(2));
+        assert_eq!(report.expected_active_streams, Some(2));
+        assert_eq!(report.minimum_active_streams, Some(1));
+        assert_eq!(report.maximum_active_streams, Some(2));
+        assert_eq!(report.active_stream_shortfall_observations, 1);
     }
 
     #[test]

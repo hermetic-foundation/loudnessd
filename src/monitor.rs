@@ -43,6 +43,7 @@ pub struct SoakReport {
     pub ipc_failures: u64,
     pub unhealthy_route_observations: u64,
     pub stalled_callback_observations: u64,
+    pub converging_observations: u64,
     pub convergence_eligible_observations: u64,
     pub convergence_passing_observations: u64,
     pub convergence_ratio: Option<f64>,
@@ -112,10 +113,10 @@ impl SoakAccumulator {
                 && stream.route == RouteStatus::Healthy
                 && !stream.gain_clamped
                 && stream.limiter_db <= 0.01
-                && matches!(
-                    stream.control,
-                    ControlStatus::Settled | ControlStatus::Converging
-                );
+                && stream.control == ControlStatus::Settled;
+            if stream.control == ControlStatus::Converging {
+                self.report.converging_observations += 1;
+            }
             if eligible && let Some(output_lufs) = stream.output_lufs {
                 self.report.convergence_eligible_observations += 1;
                 if (output_lufs - stream.target_lufs).abs() <= CONVERGENCE_TOLERANCE_LU {
@@ -257,6 +258,18 @@ mod tests {
         assert_eq!(report.final_rss_bytes, Some(2_002_000));
         assert_eq!(report.rss_growth_bytes, Some(1000));
         assert_eq!(report.average_cpu_percent, Some(5.0));
+    }
+
+    #[test]
+    fn reports_but_does_not_score_in_progress_slew() {
+        let mut accumulator = SoakAccumulator::default();
+        let mut converging = status(1, -20.0);
+        converging.streams[0].control = ControlStatus::Converging;
+        accumulator.observe(&converging);
+
+        let report = accumulator.finish(Duration::from_secs(1));
+        assert_eq!(report.converging_observations, 1);
+        assert_eq!(report.convergence_eligible_observations, 0);
     }
 
     #[test]

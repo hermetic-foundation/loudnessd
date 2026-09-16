@@ -67,3 +67,31 @@ post-filter observability rather than addressing an observed instability.
   target before and after the soak.
 - Exercise limiter-bound material and verify the configured peak ceiling.
 - Complete the lifecycle and recovery matrix from the release gates.
+
+## Eight-hour soak interim finding
+
+An eight-hour run started at 2026-09-16 10:39:26 CDT with candidate
+`/nix/store/0998kh4y7777zawdzrvmsdlsjsva19ca-loudnessd-0.1.0`. The run remains
+active, so these observations are evidence from its first 2.4 hours rather
+than a final result:
+
+| Measurement | Interim result |
+| --- | ---: |
+| Monitor samples | 8,710 |
+| Daemon restarts | 0 |
+| Unhealthy route observations | 0 |
+| Resident-memory range | 6.15-9.28 MiB |
+| Average process CPU | 3.50% of one core |
+| Continuous settled samples within 1.5 LU | 6,350 / 6,351 |
+| Intermittent settled samples within 1.5 LU | 5,695 / 6,059 |
+| Maximum intermittent output true peak | +0.535 dBTP |
+| Intermittent samples above the -1 dBTP ceiling | 8,462 / 8,709 |
+| Reported intermittent limiter reduction | 0.0 dB |
+
+The run therefore fails the true-peak release gate even though routing,
+continuity, convergence, CPU, and memory remain stable so far. The current
+limiter observes only sample peaks; the post-filter BS.1770 meter proves that
+inter-sample peaks escape it. This is a release blocker. The required fix is a
+real true-peak limiter with lookahead, followed by a fresh full-duration soak
+on the release candidate. Lowering the release threshold or treating sample
+peak as true peak is not an acceptable resolution.

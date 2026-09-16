@@ -28,7 +28,7 @@ use crate::{
     route_transaction::{ActiveRoute, bypass, install},
     routing::{RouteHealth, RoutePlanError, plan_route, route_health},
     runtime_config::RuntimeConfig,
-    status::DaemonStatus,
+    status::{DaemonStatus, SkippedStreamStatus},
     stream_control::StreamControl,
 };
 
@@ -62,7 +62,7 @@ struct Daemon {
     graph: Rc<std::cell::RefCell<GraphState>>,
     controllers: ControllerBank,
     managed: HashMap<u32, ManagedStream>,
-    unsupported: HashSet<u32>,
+    skipped: HashMap<u32, SkippedStreamStatus>,
     retained_direct_links: Vec<OwnedLinks>,
     recovery_journal: RecoveryJournal,
     config_path: PathBuf,
@@ -117,7 +117,7 @@ impl Daemon {
             }
             Command::Enable => {
                 self.enabled = true;
-                self.unsupported.clear();
+                self.skipped.clear();
                 Ok("ok\n".to_owned())
             }
             Command::Disable => {
@@ -157,6 +157,7 @@ impl Daemon {
             self.enabled,
             &self.controllers,
             &self.managed,
+            &self.skipped,
             &self.graph.borrow(),
         )
     }
@@ -167,7 +168,7 @@ impl Daemon {
         }
         self.controllers.apply_user_config(next.effective());
         self.runtime_config = next;
-        self.unsupported.clear();
+        self.skipped.clear();
         Ok(())
     }
 
@@ -180,7 +181,7 @@ impl Daemon {
             .map(|stream| stream.node_id)
             .collect();
         self.managed.retain(|node_id, _| present.contains(node_id));
-        self.unsupported.retain(|node_id| present.contains(node_id));
+        self.skipped.retain(|node_id, _| present.contains(node_id));
         if self.managed.len() != previous_count {
             self.sync_recovery_journal(None);
         }
@@ -211,7 +212,7 @@ impl Daemon {
             else {
                 continue;
             };
-            self.unsupported.remove(&node_id);
+            self.skipped.remove(&node_id);
             if health == RouteHealth::Superseded {
                 eprintln!("loudnessd: stream {node_id} route changed; reconnecting");
                 self.sync_recovery_journal(None);
@@ -261,7 +262,7 @@ impl Daemon {
         let streams: Vec<_> = self.graph.borrow().streams().cloned().collect();
         for stream in streams {
             if self.managed.contains_key(&stream.node_id)
-                || self.unsupported.contains(&stream.node_id)
+                || self.skipped.contains_key(&stream.node_id)
             {
                 continue;
             }
@@ -271,7 +272,7 @@ impl Daemon {
                 .policy_for(&application_id)
                 .enables(stream.domain)
             {
-                self.unsupported.insert(stream.node_id);
+                self.skip_stream(&stream, "disabled by policy");
                 continue;
             }
             let Some(channels) = self.ready_channels(&stream) else {
@@ -298,7 +299,7 @@ impl Daemon {
                         "loudnessd: stream {} filter creation failed: {error}",
                         stream.node_id
                     );
-                    self.unsupported.insert(stream.node_id);
+                    self.skip_stream(&stream, format!("filter creation failed: {error}"));
                 }
             }
         }
@@ -411,12 +412,12 @@ impl Daemon {
                 }
                 Err(error) => {
                     eprintln!("loudnessd: stream {node_id} cannot be routed: {error:?}");
-                    self.unsupported.insert(node_id);
+                    self.skip_stream(&stream, format!("route planning failed: {error:?}"));
                     continue;
                 }
             };
             if !self.sync_recovery_journal(Some(&plan)) {
-                self.unsupported.insert(node_id);
+                self.skip_stream(&stream, "recovery journal update failed");
                 continue;
             }
             let mut backend = PipewireRouteBackend::new(
@@ -449,7 +450,13 @@ impl Daemon {
                         "loudnessd: stream {node_id} route installation failed at {:?}: {}",
                         error.operation, error.error
                     );
-                    self.unsupported.insert(node_id);
+                    self.skip_stream(
+                        &stream,
+                        format!(
+                            "route installation failed at {:?}: {}",
+                            error.operation, error.error
+                        ),
+                    );
                     self.sync_recovery_journal(None);
                 }
             }
@@ -472,6 +479,18 @@ impl Daemon {
                 eprintln!("loudnessd: controller update failed: {error}");
             }
         }
+    }
+
+    fn skip_stream(&mut self, stream: &DiscoveredStream, reason: impl Into<String>) {
+        self.skipped.insert(
+            stream.node_id,
+            SkippedStreamStatus {
+                node_id: stream.node_id,
+                domain: domain_name(stream.domain).to_owned(),
+                application: application_id(stream),
+                reason: reason.into(),
+            },
+        );
     }
 
     fn bypass_all(&mut self) -> bool {
@@ -562,7 +581,7 @@ pub fn run(
         graph,
         controllers,
         managed: HashMap::new(),
-        unsupported: HashSet::new(),
+        skipped: HashMap::new(),
         retained_direct_links: Vec::new(),
         recovery_journal,
         config_path,

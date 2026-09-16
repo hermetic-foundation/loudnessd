@@ -21,7 +21,8 @@ lifecycle behavior depend on a live PipeWire graph.
   without an unexpected silence interval longer than two graph quanta.
 - The soak starts monitoring only after every intended stream is active, passes
   that count through `--expect-active`, and reports zero
-  `active_stream_shortfall_observations`.
+  `active_stream_shortfall_observations` and zero
+  `skipped_stream_observations`.
 - The soak includes continuous music, speech, intermittent browser audio,
   silence, and content that reaches both boost and cut paths.
 - For non-silent windows that are not gain-clamped or limiter-bound, at least
@@ -66,7 +67,8 @@ remain after cleanup.
 - Mono and stereo planar floating-point playback and capture pass live tests at
   every sample rate supported by the test devices.
 - Ambiguous, unsupported, or multichannel topology is left on its original
-  direct route and reports a specific reason.
+  direct route and reports a specific persistent reason through both text and
+  JSON status.
 - Native, Wine, and Proton application identity is documented from observed
   metadata; policy matching does not rely on an inherited process name when a
   more specific application identity exists.

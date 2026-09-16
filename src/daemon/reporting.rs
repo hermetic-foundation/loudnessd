@@ -7,7 +7,10 @@ use crate::{
     pipewire_backend::GraphState,
     process_metrics,
     routing::{RouteHealth, route_health},
-    status::{ControlStatus, DaemonStatus, RouteStatus, StreamLifecycle, StreamStatus},
+    status::{
+        ControlStatus, DaemonStatus, RouteStatus, SkippedStreamStatus, StreamLifecycle,
+        StreamStatus,
+    },
 };
 
 use super::ManagedStream;
@@ -16,6 +19,7 @@ pub(super) fn snapshot(
     enabled: bool,
     controllers: &ControllerBank,
     managed: &HashMap<u32, ManagedStream>,
+    skipped: &HashMap<u32, SkippedStreamStatus>,
     graph: &GraphState,
 ) -> DaemonStatus {
     let mut streams: Vec<_> = managed
@@ -23,6 +27,8 @@ pub(super) fn snapshot(
         .map(|(node_id, managed)| stream_status(*node_id, managed, controllers, graph))
         .collect();
     streams.sort_by_key(|stream| stream.node_id);
+    let mut skipped_streams: Vec<_> = skipped.values().cloned().collect();
+    skipped_streams.sort_by_key(|stream| stream.node_id);
 
     DaemonStatus {
         enabled,
@@ -31,8 +37,10 @@ pub(super) fn snapshot(
             .iter()
             .filter(|stream| stream.lifecycle == StreamLifecycle::Active)
             .count(),
+        skipped: skipped_streams.len(),
         process: process_metrics::read(),
         streams,
+        skipped_streams,
     }
 }
 

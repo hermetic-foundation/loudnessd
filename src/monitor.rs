@@ -48,6 +48,8 @@ pub struct SoakReport {
     pub minimum_active_streams: Option<usize>,
     pub maximum_active_streams: Option<usize>,
     pub active_stream_shortfall_observations: u64,
+    pub skipped_stream_observations: u64,
+    pub maximum_skipped_streams: usize,
     pub unhealthy_route_observations: u64,
     pub stalled_callback_observations: u64,
     pub converging_observations: u64,
@@ -115,6 +117,11 @@ impl SoakAccumulator {
             .is_some_and(|expected| status.active < expected)
         {
             self.report.active_stream_shortfall_observations += 1;
+        }
+        if status.skipped > 0 {
+            self.report.skipped_stream_observations += 1;
+            self.report.maximum_skipped_streams =
+                self.report.maximum_skipped_streams.max(status.skipped);
         }
         if let Some(process) = &status.process {
             self.report
@@ -268,6 +275,7 @@ mod tests {
             enabled: true,
             managed: 1,
             active: 1,
+            skipped: 0,
             process: Some(ProcessStatus {
                 pid: 100,
                 start_time_ticks: 1_000,
@@ -294,6 +302,7 @@ mod tests {
                 limiter_db: 0.0,
                 limiter_max_db: 0.4,
             }],
+            skipped_streams: Vec::new(),
         }
     }
 
@@ -338,6 +347,19 @@ mod tests {
         assert_eq!(report.minimum_active_streams, Some(1));
         assert_eq!(report.maximum_active_streams, Some(2));
         assert_eq!(report.active_stream_shortfall_observations, 1);
+    }
+
+    #[test]
+    fn reports_skipped_streams() {
+        let mut accumulator = SoakAccumulator::default();
+        let mut skipped = status(1, -13.0);
+        skipped.skipped = 2;
+        accumulator.observe(&skipped);
+        accumulator.observe(&status(2, -13.0));
+
+        let report = accumulator.finish(Duration::from_secs(2));
+        assert_eq!(report.skipped_stream_observations, 1);
+        assert_eq!(report.maximum_skipped_streams, 2);
     }
 
     #[test]

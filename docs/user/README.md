@@ -131,7 +131,10 @@ gain, and limiter state as structured JSON for soak tests and monitoring tools.
 It also includes the meter sequence, configured target, and gain-limit state so
 monitors can distinguish silence from a stalled audio callback and exclude
 target-unreachable streams from convergence scoring, including while their gain
-is still slewing toward a configured limit.
+is still slewing toward a configured limit. Streams deliberately left on their
+original direct route appear under `skipped_streams` with their node ID,
+direction, application identity, and specific reason. The text status prints
+the same records as `skipped_stream=...` lines.
 
 Run a bounded soak monitor and optionally retain its raw NDJSON observations:
 
@@ -142,9 +145,10 @@ loudnessd monitor --duration 3600 --interval 1000 --expect-active 2 \
 
 The final JSON summary reports IPC failures, unhealthy routes, stalled callback
 sequences, daemon restarts, active-stream shortfalls, in-progress slew
-observations, convergence within 1.5 LU after the controller settles, and
-maximum limiter reduction. It also records expected, minimum, and maximum active
-stream counts, initial, final, and peak resident memory, memory growth, and
+observations, skipped-stream observations, convergence within 1.5 LU after the
+controller settles, and maximum limiter reduction. It also records expected,
+minimum, and maximum active stream counts, the maximum simultaneous skipped
+stream count, initial, final, and peak resident memory, memory growth, and
 average daemon CPU use. CPU accounting remains valid across a daemon restart
 because status includes both the process ID and Linux process start time. The
 NDJSON contains status measurements and metadata only; it never contains audio
@@ -224,7 +228,9 @@ generated Nix-store configuration or `services.loudnessd.configFile`.
 ## Limitations
 
 - Only application streams with unambiguous, channel-labelled routes are
-  normalized; unsupported topology is left untouched.
+  normalized; unsupported topology is left untouched and its reason remains
+  visible through `loudnessd msg status` and `status-json` while the stream
+  exists.
 - Application metadata varies between native, Wine, and Proton software, so
   inspect `--list-streams` before relying on a per-application override.
 - Native Chromium and PipeWire playback and capture clients have been validated

@@ -49,6 +49,14 @@ pub struct StreamStatus {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SkippedStreamStatus {
+    pub node_id: u32,
+    pub domain: String,
+    pub application: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProcessStatus {
     pub pid: u32,
     pub start_time_ticks: u64,
@@ -63,15 +71,19 @@ pub struct DaemonStatus {
     pub enabled: bool,
     pub managed: usize,
     pub active: usize,
+    #[serde(default)]
+    pub skipped: usize,
     pub process: Option<ProcessStatus>,
     pub streams: Vec<StreamStatus>,
+    #[serde(default)]
+    pub skipped_streams: Vec<SkippedStreamStatus>,
 }
 
 impl DaemonStatus {
     pub fn to_text(&self) -> String {
         let mut output = format!(
-            "enabled={} managed={} active={}\n",
-            self.enabled, self.managed, self.active
+            "enabled={} managed={} active={} skipped={}\n",
+            self.enabled, self.managed, self.active, self.skipped
         );
         if let Some(process) = &self.process {
             output.push_str(&format!(
@@ -108,6 +120,12 @@ impl DaemonStatus {
                 stream.gain_clamped,
                 stream.limiter_db,
                 stream.limiter_max_db,
+            ));
+        }
+        for stream in &self.skipped_streams {
+            output.push_str(&format!(
+                "skipped_stream={} domain={} application={} reason={}\n",
+                stream.node_id, stream.domain, stream.application, stream.reason,
             ));
         }
         output
@@ -162,6 +180,7 @@ mod tests {
             enabled: true,
             managed: 1,
             active: 1,
+            skipped: 1,
             process: Some(ProcessStatus {
                 pid: 123,
                 start_time_ticks: 4_567,
@@ -188,12 +207,21 @@ mod tests {
                 limiter_db: 0.2,
                 limiter_max_db: 1.5,
             }],
+            skipped_streams: vec![SkippedStreamStatus {
+                node_id: 99,
+                domain: "capture".to_owned(),
+                application: "recorder".to_owned(),
+                reason: "disabled by policy".to_owned(),
+            }],
         };
 
         let text = status.to_text();
         assert!(text.contains("process_pid=123 process_start_time_ticks=4567"));
         assert!(text.contains("route=healthy control=settled"));
         assert!(text.contains("output_lufs=-13.10"));
+        assert!(text.contains(
+            "skipped_stream=99 domain=capture application=recorder reason=disabled by policy"
+        ));
 
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["streams"][0]["route"], "healthy");
@@ -205,5 +233,7 @@ mod tests {
         let output_lufs = json["streams"][0]["output_lufs"].as_f64().unwrap();
         assert!((output_lufs - -13.1).abs() < 0.0001);
         assert_eq!(json["streams"][0]["limiter_max_db"], 1.5);
+        assert_eq!(json["skipped"], 1);
+        assert_eq!(json["skipped_streams"][0]["reason"], "disabled by policy");
     }
 }

@@ -88,6 +88,12 @@ creates lingering direct links, deactivates each filter, then removes the
 daemon-owned replacement links and nodes. Lingering is intentional for restored
 direct routes: otherwise a clean daemon disconnect would silence the stream.
 
+Registry objects for one stream can arrive across several main-loop iterations.
+Discovery therefore requires the same complete channel layout to remain stable
+for 500 ms before creating a filter. A missing port or link resets that window;
+a changed channel set starts it again. This prevents a partially announced
+stereo or multichannel stream from being routed as if it were complete mono.
+
 `loudnessd msg disable` performs the same ordered bypass and teardown while
 leaving the daemon available for inspection and later re-enablement. Processing
 must fail open: an internal error restores the original route rather than

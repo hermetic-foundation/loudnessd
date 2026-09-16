@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::collections::HashSet;
+use std::{
+    collections::{HashMap, HashSet},
+    time::{Duration, Instant},
+};
 
 use crate::{
     SignalDomain,
@@ -12,6 +15,61 @@ pub(super) enum ChannelReadiness {
     Pending,
     Ready(Vec<String>),
     Skipped(String),
+}
+
+#[derive(Clone, Debug)]
+struct Candidate {
+    channels: Vec<String>,
+    stable_since: Instant,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct ChannelSettler {
+    candidates: HashMap<u32, Candidate>,
+}
+
+impl ChannelSettler {
+    pub(super) fn observe(
+        &mut self,
+        node_id: u32,
+        readiness: ChannelReadiness,
+        now: Instant,
+        settle_for: Duration,
+    ) -> ChannelReadiness {
+        let ChannelReadiness::Ready(channels) = readiness else {
+            self.candidates.remove(&node_id);
+            return readiness;
+        };
+
+        match self.candidates.get(&node_id) {
+            Some(candidate)
+                if candidate.channels == channels
+                    && now.saturating_duration_since(candidate.stable_since) >= settle_for =>
+            {
+                self.candidates.remove(&node_id);
+                ChannelReadiness::Ready(channels)
+            }
+            Some(candidate) if candidate.channels == channels => ChannelReadiness::Pending,
+            _ => {
+                self.candidates.insert(
+                    node_id,
+                    Candidate {
+                        channels,
+                        stable_since: now,
+                    },
+                );
+                ChannelReadiness::Pending
+            }
+        }
+    }
+
+    pub(super) fn retain(&mut self, mut keep: impl FnMut(u32) -> bool) {
+        self.candidates.retain(|node_id, _| keep(*node_id));
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.candidates.clear();
+    }
 }
 
 pub(super) fn channel_readiness(stream: &DiscoveredStream, graph: &GraphState) -> ChannelReadiness {
@@ -185,6 +243,93 @@ mod tests {
             ChannelReadiness::Skipped(
                 "unsupported channel count 3; only mono and stereo are supported".to_owned()
             )
+        );
+    }
+
+    #[test]
+    fn requires_a_stable_topology_before_routing() {
+        let started = Instant::now();
+        let settle_for = Duration::from_millis(500);
+        let mut settler = ChannelSettler::default();
+
+        assert_eq!(
+            settler.observe(
+                10,
+                ChannelReadiness::Ready(vec!["FL".to_owned()]),
+                started,
+                settle_for,
+            ),
+            ChannelReadiness::Pending
+        );
+        assert_eq!(
+            settler.observe(
+                10,
+                ChannelReadiness::Ready(vec!["FL".to_owned()]),
+                started + Duration::from_millis(499),
+                settle_for,
+            ),
+            ChannelReadiness::Pending
+        );
+        assert_eq!(
+            settler.observe(
+                10,
+                ChannelReadiness::Ready(vec!["FL".to_owned(), "FR".to_owned()]),
+                started + Duration::from_millis(500),
+                settle_for,
+            ),
+            ChannelReadiness::Pending
+        );
+        assert_eq!(
+            settler.observe(
+                10,
+                ChannelReadiness::Ready(vec!["FL".to_owned(), "FR".to_owned()]),
+                started + Duration::from_millis(1_000),
+                settle_for,
+            ),
+            ChannelReadiness::Ready(vec!["FL".to_owned(), "FR".to_owned()])
+        );
+    }
+
+    #[test]
+    fn incomplete_topology_resets_the_settle_window() {
+        let started = Instant::now();
+        let settle_for = Duration::from_millis(500);
+        let mut settler = ChannelSettler::default();
+        assert_eq!(
+            settler.observe(
+                10,
+                ChannelReadiness::Ready(vec!["FL".to_owned()]),
+                started,
+                settle_for,
+            ),
+            ChannelReadiness::Pending
+        );
+        assert_eq!(
+            settler.observe(
+                10,
+                ChannelReadiness::Pending,
+                started + Duration::from_millis(300),
+                settle_for,
+            ),
+            ChannelReadiness::Pending
+        );
+        assert_eq!(
+            settler.observe(
+                10,
+                ChannelReadiness::Ready(vec!["FL".to_owned()]),
+                started + Duration::from_millis(500),
+                settle_for,
+            ),
+            ChannelReadiness::Pending
+        );
+        assert_eq!(
+            settler.observe(
+                10,
+                ChannelReadiness::Ready(vec!["FL".to_owned()]),
+                started + Duration::from_millis(1_000),
+                settle_for,
+            ),
+            ChannelReadiness::Ready(vec!["FL".to_owned()])
         );
     }
 }

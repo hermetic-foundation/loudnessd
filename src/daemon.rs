@@ -9,7 +9,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use pipewire::{context::ContextRc, loop_::Timeout, main_loop::MainLoopRc};
@@ -36,9 +36,10 @@ mod recovery;
 mod reporting;
 
 use command::Command;
-use discovery::{ChannelReadiness, channel_readiness};
+use discovery::{ChannelReadiness, ChannelSettler, channel_readiness};
 
 const CONTROL_INTERVAL: Duration = Duration::from_millis(100);
+const TOPOLOGY_SETTLE_INTERVAL: Duration = Duration::from_millis(500);
 const PIPEWIRE_SAMPLE_RATE: u32 = 48_000;
 
 enum ManagedStream {
@@ -63,6 +64,7 @@ struct Daemon {
     controllers: ControllerBank,
     managed: HashMap<u32, ManagedStream>,
     skipped: HashMap<u32, SkippedStreamStatus>,
+    channel_settler: ChannelSettler,
     retained_direct_links: Vec<OwnedLinks>,
     recovery_journal: RecoveryJournal,
     config_path: PathBuf,
@@ -118,6 +120,7 @@ impl Daemon {
             Command::Enable => {
                 self.enabled = true;
                 self.skipped.clear();
+                self.channel_settler.clear();
                 Ok("ok\n".to_owned())
             }
             Command::Disable => {
@@ -169,6 +172,7 @@ impl Daemon {
         self.controllers.apply_user_config(next.effective());
         self.runtime_config = next;
         self.skipped.clear();
+        self.channel_settler.clear();
         Ok(())
     }
 
@@ -182,6 +186,8 @@ impl Daemon {
             .collect();
         self.managed.retain(|node_id, _| present.contains(node_id));
         self.skipped.retain(|node_id, _| present.contains(node_id));
+        self.channel_settler
+            .retain(|node_id| present.contains(&node_id));
         if self.managed.len() != previous_count {
             self.sync_recovery_journal(None);
         }
@@ -276,6 +282,12 @@ impl Daemon {
                 continue;
             }
             let readiness = channel_readiness(&stream, &self.graph.borrow());
+            let readiness = self.channel_settler.observe(
+                stream.node_id,
+                readiness,
+                Instant::now(),
+                TOPOLOGY_SETTLE_INTERVAL,
+            );
             let channels = match readiness {
                 ChannelReadiness::Pending => continue,
                 ChannelReadiness::Ready(channels) => channels,
@@ -552,6 +564,7 @@ pub fn run(
         controllers,
         managed: HashMap::new(),
         skipped: HashMap::new(),
+        channel_settler: ChannelSettler::default(),
         retained_direct_links: Vec::new(),
         recovery_journal,
         config_path,

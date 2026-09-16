@@ -393,8 +393,8 @@ impl Daemon {
                     continue;
                 }
                 Err(error) => {
-                    eprintln!("loudnessd: stream {node_id} cannot be routed: {error:?}");
-                    self.skip_stream(&stream, format!("route planning failed: {error:?}"));
+                    eprintln!("loudnessd: stream {node_id} cannot be routed: {error}");
+                    self.skip_stream(&stream, format!("route planning failed: {error}"));
                     continue;
                 }
             };

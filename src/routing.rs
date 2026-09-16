@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -138,6 +141,45 @@ pub enum RoutePlanError {
         channel: String,
         direction: PortDirection,
     },
+}
+
+impl fmt::Display for RoutePlanError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoStreamPorts => formatter.write_str("stream has no audio ports"),
+            Self::MissingChannel { port_id } => {
+                write!(formatter, "port {port_id} has no audio channel label")
+            }
+            Self::DuplicateStreamChannel { channel } => {
+                write!(formatter, "stream has duplicate audio channel {channel}")
+            }
+            Self::MissingRoute { port_id } => {
+                write!(formatter, "port {port_id} has no direct route")
+            }
+            Self::AmbiguousRoute { port_id } => {
+                write!(formatter, "port {port_id} has more than one direct route")
+            }
+            Self::MissingFilterPort { channel, direction } => write!(
+                formatter,
+                "filter has no {} port for channel {channel}",
+                direction_name(*direction)
+            ),
+            Self::DuplicateFilterPort { channel, direction } => write!(
+                formatter,
+                "filter has duplicate {} ports for channel {channel}",
+                direction_name(*direction)
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RoutePlanError {}
+
+fn direction_name(direction: PortDirection) -> &'static str {
+    match direction {
+        PortDirection::Input => "input",
+        PortDirection::Output => "output",
+    }
 }
 
 pub fn plan_route(
@@ -471,6 +513,22 @@ mod tests {
                 channel: "FL".to_owned(),
                 direction: PortDirection::Output,
             }
+        );
+    }
+
+    #[test]
+    fn route_errors_have_stable_human_readable_messages() {
+        assert_eq!(
+            RoutePlanError::AmbiguousRoute { port_id: 11 }.to_string(),
+            "port 11 has more than one direct route"
+        );
+        assert_eq!(
+            RoutePlanError::MissingFilterPort {
+                channel: "FL".to_owned(),
+                direction: PortDirection::Input,
+            }
+            .to_string(),
+            "filter has no input port for channel FL"
         );
     }
 

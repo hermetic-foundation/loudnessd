@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#![forbid(unsafe_op_in_unsafe_fn)]
+
 pub mod control;
 pub mod daemon;
 pub mod gain;

@@ -15,6 +15,38 @@ Run the package directly:
 nix run github:hermetic-foundation/loudnessd -- --list-streams
 ```
 
+### Portable systemd user service
+
+The repository includes `systemd/loudnessd.service` for non-NixOS systems.
+Distribution packages should install it to `lib/systemd/user/loudnessd.service`
+under their package prefix. For a source or Cargo installation, install it for
+the current user:
+
+```console
+unit=$HOME/.config/systemd/user/loudnessd.service
+install -Dm644 systemd/loudnessd.service "$unit"
+sed -i "s|/usr/bin/loudnessd|$(command -v loudnessd)|" "$unit"
+systemctl --user daemon-reload
+systemctl --user enable --now loudnessd.service
+```
+
+Distribution packages that install the executable at `/usr/bin/loudnessd` can
+ship the unit unchanged. Installations using another prefix must replace that
+path during packaging, as the Nix derivation does.
+
+The portable unit runs `loudnessd --daemon` without an explicit config path.
+On first start, loudnessd creates the generic configuration at
+`$XDG_CONFIG_HOME/loudnessd/config.toml`, or
+`$HOME/.config/loudnessd/config.toml` when `XDG_CONFIG_HOME` is unset. It never
+overwrites an existing configuration.
+
+The Nix package installs this portable unit under
+`$out/lib/systemd/user/loudnessd.service`. NixOS users should use the module
+below instead; its generated service supplies the immutable configuration path
+directly.
+
+### NixOS module
+
 To install it through NixOS, add the flake input and module:
 
 ```nix

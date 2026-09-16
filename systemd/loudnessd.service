@@ -1,0 +1,15 @@
+[Unit]
+Description=Per-application PipeWire loudness normalization
+Documentation=https://github.com/hermetic-foundation/loudnessd
+After=pipewire.service
+Wants=pipewire.service
+PartOf=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/loudnessd --daemon
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

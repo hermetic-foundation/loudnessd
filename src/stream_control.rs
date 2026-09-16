@@ -22,8 +22,7 @@ impl NormalizationEndpoint for ConnectedFilter {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ControlUpdate {
-    pub sequence: u64,
-    pub loudness_lufs: f32,
+    pub meter: MeterSnapshot,
     pub decision: Decision,
 }
 
@@ -85,15 +84,14 @@ impl StreamControl {
             &self.application_id,
             &self.stream_id,
             Observation {
-                lufs: snapshot.loudness_lufs,
+                lufs: snapshot.source_loudness_lufs,
                 elapsed_seconds,
             },
         );
         endpoint.set_target_gain_db(decision.target_gain_db())?;
         self.last_sequence = Some(snapshot.sequence);
         let update = ControlUpdate {
-            sequence: snapshot.sequence,
-            loudness_lufs: snapshot.loudness_lufs,
+            meter: snapshot,
             decision,
         };
         self.last_update = Some(update);
@@ -125,13 +123,22 @@ mod tests {
         }
     }
 
+    fn snapshot(sequence: u64, source_loudness_lufs: f32) -> MeterSnapshot {
+        MeterSnapshot {
+            sequence,
+            source_loudness_lufs,
+            source_true_peak_dbtp: Some(-3.0),
+            output_loudness_lufs: Some(-13.0),
+            output_true_peak_dbtp: Some(-1.0),
+            limiter_reduction_db: 0.0,
+            maximum_limiter_reduction_db: 0.0,
+        }
+    }
+
     #[test]
     fn applies_each_meter_sequence_once() {
         let endpoint = FakeEndpoint::default();
-        endpoint.snapshot.set(Some(MeterSnapshot {
-            sequence: 1,
-            loudness_lufs: -23.0,
-        }));
+        endpoint.snapshot.set(Some(snapshot(1, -23.0)));
         let mut control = StreamControl::new(SignalDomain::Playback, "player", "stream-1");
         let mut controllers = ControllerBank::defaults();
 
@@ -140,8 +147,9 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(update.sequence, 1);
-        assert_eq!(update.loudness_lufs, -23.0);
+        assert_eq!(update.meter.sequence, 1);
+        assert_eq!(update.meter.source_loudness_lufs, -23.0);
+        assert_eq!(update.meter.output_loudness_lufs, Some(-13.0));
         assert_eq!(endpoint.target_gain_db.get(), 1.0);
         assert_eq!(control.domain(), SignalDomain::Playback);
         assert_eq!(control.application_id(), "player");
@@ -163,10 +171,7 @@ mod tests {
     #[test]
     fn bypassed_direction_restores_unity_gain() {
         let endpoint = FakeEndpoint {
-            snapshot: Cell::new(Some(MeterSnapshot {
-                sequence: 1,
-                loudness_lufs: -23.0,
-            })),
+            snapshot: Cell::new(Some(snapshot(1, -23.0))),
             target_gain_db: Cell::new(6.0),
         };
         let mut control = StreamControl::new(SignalDomain::Capture, "player", "stream-1");

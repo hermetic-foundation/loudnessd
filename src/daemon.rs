@@ -110,28 +110,46 @@ impl Daemon {
                 let mut streams: Vec<_> = self.managed.iter().collect();
                 streams.sort_by_key(|(node_id, _)| **node_id);
                 for (node_id, managed) in streams {
-                    let (state, control) = match managed {
-                        ManagedStream::Connecting { control, .. } => ("connecting", control),
-                        ManagedStream::Active { control, .. } => ("active", control),
+                    let (state, route, control) = match managed {
+                        ManagedStream::Connecting { control, .. } => {
+                            ("connecting", "connecting", control)
+                        }
+                        ManagedStream::Active { control, route, .. } => {
+                            let graph = self.graph.borrow();
+                            (
+                                "active",
+                                route_health_name(route_health(route.plan(), &graph)),
+                                control,
+                            )
+                        }
                     };
                     let domain = domain_name(control.domain());
                     if let Some(update) = control.last_update() {
+                        let meter = update.meter;
                         lines.push(format!(
-                            "stream={} domain={} application={} state={} lufs={:.2} gain_db={:.2}\n",
+                            "stream={} domain={} application={} state={} route={} control={} source_lufs={:.2} source_peak_dbtp={} output_lufs={} output_peak_dbtp={} gain_db={:.2} limiter_db={:.2} limiter_max_db={:.2}\n",
                             node_id,
                             domain,
                             control.application_id(),
                             state,
-                            update.loudness_lufs,
+                            route,
+                            decision_state(update.decision),
+                            meter.source_loudness_lufs,
+                            format_optional_metric(meter.source_true_peak_dbtp),
+                            format_optional_metric(meter.output_loudness_lufs),
+                            format_optional_metric(meter.output_true_peak_dbtp),
                             update.decision.target_gain_db(),
+                            meter.limiter_reduction_db,
+                            meter.maximum_limiter_reduction_db,
                         ));
                     } else {
                         lines.push(format!(
-                            "stream={} domain={} application={} state={} lufs=unavailable gain_db=0.00\n",
+                            "stream={} domain={} application={} state={} route={} control=waiting source_lufs=unavailable source_peak_dbtp=unavailable output_lufs=unavailable output_peak_dbtp=unavailable gain_db=0.00 limiter_db=0.00 limiter_max_db=0.00\n",
                             node_id,
                             domain,
                             control.application_id(),
                             state,
+                            route,
                         ));
                     }
                 }
@@ -620,6 +638,29 @@ fn recovery_endpoints_present(graph: &GraphState, specs: &[crate::routing::LinkS
             GraphPortDirection::Input,
         )
     })
+}
+
+fn decision_state(decision: crate::Decision) -> &'static str {
+    match decision {
+        crate::Decision::Bypass => "bypass",
+        crate::Decision::Silence { .. } => "silence",
+        crate::Decision::Hold { .. } => "settled",
+        crate::Decision::Adjust { .. } => "converging",
+    }
+}
+
+fn route_health_name(health: RouteHealth) -> &'static str {
+    match health {
+        RouteHealth::Healthy => "healthy",
+        RouteHealth::Superseded => "superseded",
+        RouteHealth::Broken => "broken",
+    }
+}
+
+fn format_optional_metric(value: Option<f32>) -> String {
+    value
+        .map(|value| format!("{value:.2}"))
+        .unwrap_or_else(|| "unavailable".to_owned())
 }
 
 fn parse_domain(value: &str) -> Result<SignalDomain, String> {

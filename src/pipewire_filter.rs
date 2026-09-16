@@ -15,7 +15,7 @@ use pipewire::{loop_::Loop, properties::properties, sys};
 
 use crate::{
     gain::{GainStage, PeakLimiter},
-    meter::LoudnessMeter,
+    meter::{LoudnessMeter, MeterReading},
 };
 
 const MAX_METER_CHANNELS: usize = 64;
@@ -52,7 +52,12 @@ pub struct PortDescriptor {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeterSnapshot {
     pub sequence: u64,
-    pub loudness_lufs: f32,
+    pub source_loudness_lufs: f32,
+    pub source_true_peak_dbtp: Option<f32>,
+    pub output_loudness_lufs: Option<f32>,
+    pub output_true_peak_dbtp: Option<f32>,
+    pub limiter_reduction_db: f32,
+    pub maximum_limiter_reduction_db: f32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -144,14 +149,16 @@ struct FilterCallbackData {
     ports: Vec<CallbackPort>,
     target_gain_bits: AtomicU32,
     meter: Option<MeterState>,
-    latest_loudness: PublishedLoudness,
+    latest_metrics: PublishedMetrics,
     limiter: PeakLimiter,
+    maximum_limiter_reduction_db: f32,
 }
 
 struct MeterState {
     sample_rate: u32,
     channels: Vec<Channel>,
-    meter: LoudnessMeter,
+    source: LoudnessMeter,
+    output: LoudnessMeter,
 }
 
 impl Default for FilterCallbackData {
@@ -160,8 +167,9 @@ impl Default for FilterCallbackData {
             ports: Vec::new(),
             target_gain_bits: AtomicU32::new(0.0_f32.to_bits()),
             meter: None,
-            latest_loudness: PublishedLoudness::default(),
+            latest_metrics: PublishedMetrics::default(),
             limiter: PeakLimiter::default(),
+            maximum_limiter_reduction_db: 0.0,
         }
     }
 }
@@ -211,17 +219,40 @@ impl CycleBuffers {
 }
 
 #[derive(Default)]
-struct PublishedLoudness {
+struct PublishedMetrics {
     version: AtomicU64,
-    loudness_bits: AtomicU32,
+    source_loudness_bits: AtomicU32,
+    source_true_peak_bits: AtomicU32,
+    output_loudness_bits: AtomicU32,
+    output_true_peak_bits: AtomicU32,
+    limiter_reduction_bits: AtomicU32,
+    maximum_limiter_reduction_bits: AtomicU32,
 }
 
-impl PublishedLoudness {
-    fn publish(&self, loudness_lufs: f32) {
+impl PublishedMetrics {
+    fn publish(&self, metrics: ProcessMetrics) {
         let version = self.version.fetch_add(1, Ordering::AcqRel);
         debug_assert_eq!(version % 2, 0, "the process callback is a single writer");
-        self.loudness_bits
-            .store(loudness_lufs.to_bits(), Ordering::Relaxed);
+        self.source_loudness_bits
+            .store(metrics.source.loudness_lufs.to_bits(), Ordering::Relaxed);
+        self.source_true_peak_bits.store(
+            option_f32_bits(metrics.source.true_peak_dbtp),
+            Ordering::Relaxed,
+        );
+        self.output_loudness_bits.store(
+            option_f32_bits(metrics.output.map(|reading| reading.loudness_lufs)),
+            Ordering::Relaxed,
+        );
+        self.output_true_peak_bits.store(
+            option_f32_bits(metrics.output.and_then(|reading| reading.true_peak_dbtp)),
+            Ordering::Relaxed,
+        );
+        self.limiter_reduction_bits
+            .store(metrics.limiter_reduction_db.to_bits(), Ordering::Relaxed);
+        self.maximum_limiter_reduction_bits.store(
+            metrics.maximum_limiter_reduction_db.to_bits(),
+            Ordering::Relaxed,
+        );
         self.version.store(version + 2, Ordering::Release);
     }
 
@@ -235,16 +266,49 @@ impl PublishedLoudness {
                 std::hint::spin_loop();
                 continue;
             }
-            let loudness_lufs = f32::from_bits(self.loudness_bits.load(Ordering::Relaxed));
+            let source_loudness_lufs =
+                f32::from_bits(self.source_loudness_bits.load(Ordering::Relaxed));
+            let source_true_peak_dbtp =
+                option_f32_from_bits(self.source_true_peak_bits.load(Ordering::Relaxed));
+            let output_loudness_lufs =
+                option_f32_from_bits(self.output_loudness_bits.load(Ordering::Relaxed));
+            let output_true_peak_dbtp =
+                option_f32_from_bits(self.output_true_peak_bits.load(Ordering::Relaxed));
+            let limiter_reduction_db =
+                f32::from_bits(self.limiter_reduction_bits.load(Ordering::Relaxed));
+            let maximum_limiter_reduction_db =
+                f32::from_bits(self.maximum_limiter_reduction_bits.load(Ordering::Relaxed));
             let after = self.version.load(Ordering::Acquire);
             if before == after {
                 return Some(MeterSnapshot {
                     sequence: before / 2,
-                    loudness_lufs,
+                    source_loudness_lufs,
+                    source_true_peak_dbtp,
+                    output_loudness_lufs,
+                    output_true_peak_dbtp,
+                    limiter_reduction_db,
+                    maximum_limiter_reduction_db,
                 });
             }
         }
     }
+}
+
+#[derive(Clone, Copy)]
+struct ProcessMetrics {
+    source: MeterReading,
+    output: Option<MeterReading>,
+    limiter_reduction_db: f32,
+    maximum_limiter_reduction_db: f32,
+}
+
+fn option_f32_bits(value: Option<f32>) -> u32 {
+    value.unwrap_or(f32::NAN).to_bits()
+}
+
+fn option_f32_from_bits(bits: u32) -> Option<f32> {
+    let value = f32::from_bits(bits);
+    value.is_finite().then_some(value)
 }
 
 unsafe extern "C" fn process(
@@ -271,7 +335,14 @@ unsafe extern "C" fn process(
 
     let sample_rate =
         process_sample_rate(position, data.meter.as_ref().map(|meter| meter.sample_rate));
-    meter_source(data, &buffers, sample_count, sample_rate);
+    prepare_meters(data, sample_rate);
+    let source_reading = meter_ports(
+        data,
+        &buffers,
+        sample_count,
+        PortDirection::Input,
+        MeterKind::Source,
+    );
 
     let target_gain_db = f32::from_bits(data.target_gain_bits.load(Ordering::Relaxed));
     for output_index in 0..data.ports.len() {
@@ -300,7 +371,23 @@ unsafe extern "C" fn process(
             target_gain_db,
         );
     }
-    limit_output_ports(data, &buffers, sample_count, sample_rate);
+    let limiter_reduction_db = limit_output_ports(data, &buffers, sample_count, sample_rate);
+    data.maximum_limiter_reduction_db = data.maximum_limiter_reduction_db.max(limiter_reduction_db);
+    let output_reading = meter_ports(
+        data,
+        &buffers,
+        sample_count,
+        PortDirection::Output,
+        MeterKind::Output,
+    );
+    if let Some(source) = source_reading {
+        data.latest_metrics.publish(ProcessMetrics {
+            source,
+            output: output_reading,
+            limiter_reduction_db,
+            maximum_limiter_reduction_db: data.maximum_limiter_reduction_db,
+        });
+    }
 }
 
 fn limit_output_ports(
@@ -308,9 +395,9 @@ fn limit_output_ports(
     buffers: &CycleBuffers,
     sample_count: u32,
     sample_rate: Option<u32>,
-) {
+) -> f32 {
     let Some(sample_rate) = sample_rate else {
-        return;
+        return 0.0;
     };
     let mut outputs = [std::ptr::null_mut(); MAX_METER_CHANNELS];
     let mut output_count = 0;
@@ -319,7 +406,7 @@ fn limit_output_ports(
             continue;
         }
         if output_count == MAX_METER_CHANNELS {
-            return;
+            return 0.0;
         }
         let Some(output) = buffers.get(index) else {
             continue;
@@ -327,6 +414,7 @@ fn limit_output_ports(
         outputs[output_count] = output.as_ptr();
         output_count += 1;
     }
+    let mut minimum_limiter_gain = 1.0_f32;
     for sample_index in 0..sample_count as usize {
         let peak = outputs[..output_count]
             .iter()
@@ -334,10 +422,16 @@ fn limit_output_ports(
             .map(|output| unsafe { *output.add(sample_index) }.abs())
             .fold(0.0_f32, f32::max);
         let limiter_gain = data.limiter.gain_for_peak(peak, sample_rate);
+        minimum_limiter_gain = minimum_limiter_gain.min(limiter_gain);
         for output in &outputs[..output_count] {
             // Every pointer was validated above for a buffer of sample_count samples.
             unsafe { *output.add(sample_index) *= limiter_gain };
         }
+    }
+    if minimum_limiter_gain > 0.0 {
+        -20.0 * minimum_limiter_gain.log10()
+    } else {
+        f32::INFINITY
     }
 }
 
@@ -352,50 +446,67 @@ fn process_sample_rate(
     rate.denom.checked_div(rate.num).filter(|rate| *rate > 0)
 }
 
-fn meter_source(
-    data: &mut FilterCallbackData,
-    buffers: &CycleBuffers,
-    sample_count: u32,
-    sample_rate: Option<u32>,
-) {
+#[derive(Clone, Copy)]
+enum MeterKind {
+    Source,
+    Output,
+}
+
+fn prepare_meters(data: &mut FilterCallbackData, sample_rate: Option<u32>) {
     let Some(sample_rate) = sample_rate else {
         return;
     };
     let Some(meter) = data.meter.as_mut() else {
         return;
     };
-    if meter.sample_rate != sample_rate {
-        let Ok(rebuilt) = LoudnessMeter::new(sample_rate, &meter.channels) else {
-            return;
-        };
-        meter.sample_rate = sample_rate;
-        meter.meter = rebuilt;
+    if meter.sample_rate == sample_rate {
+        return;
     }
+    let (Ok(source), Ok(output)) = (
+        LoudnessMeter::new(sample_rate, &meter.channels),
+        LoudnessMeter::new(sample_rate, &meter.channels),
+    ) else {
+        return;
+    };
+    meter.sample_rate = sample_rate;
+    meter.source = source;
+    meter.output = output;
+}
+
+fn meter_ports(
+    data: &mut FilterCallbackData,
+    buffers: &CycleBuffers,
+    sample_count: u32,
+    direction: PortDirection,
+    kind: MeterKind,
+) -> Option<MeterReading> {
+    let meter = data.meter.as_mut()?;
     let mut channels = [&[][..]; MAX_METER_CHANNELS];
     let mut channel_count = 0;
     for (index, port) in data.ports.iter().enumerate() {
-        if port.direction != PortDirection::Input {
+        if port.direction != direction {
             continue;
         }
         if channel_count == MAX_METER_CHANNELS {
-            return;
+            return None;
         }
         // SAFETY: The pointer and length follow from the PipeWire DSP buffer
         // contract above, and the slice does not escape this callback.
-        let Some(input) = buffers.get(index) else {
-            return;
-        };
+        let input = buffers.get(index)?;
         channels[channel_count] =
             unsafe { std::slice::from_raw_parts(input.as_ptr(), sample_count as usize) };
         channel_count += 1;
     }
     if channel_count == 0 {
-        return;
+        return None;
     }
 
-    if let Ok(Some(reading)) = meter.meter.push_planar(&channels[..channel_count]) {
-        data.latest_loudness.publish(reading.loudness_lufs);
+    match kind {
+        MeterKind::Source => meter.source.push_planar(&channels[..channel_count]),
+        MeterKind::Output => meter.output.push_planar(&channels[..channel_count]),
     }
+    .ok()
+    .flatten()
 }
 
 fn process_mono_buffers(
@@ -614,7 +725,8 @@ impl UnconnectedFilter {
             .collect();
         self.callback_data.meter = Some(MeterState {
             sample_rate,
-            meter: LoudnessMeter::new(sample_rate, &channels)?,
+            source: LoudnessMeter::new(sample_rate, &channels)?,
+            output: LoudnessMeter::new(sample_rate, &channels)?,
             channels,
         });
         Ok(())
@@ -682,7 +794,7 @@ impl ConnectedFilter {
     }
 
     pub fn latest_meter_snapshot(&self) -> Option<MeterSnapshot> {
-        self.filter.callback_data.latest_loudness.read()
+        self.filter.callback_data.latest_metrics.read()
     }
 
     pub fn set_active(&mut self, active: bool) -> Result<(), FilterActivationError> {
@@ -871,24 +983,56 @@ mod tests {
 
     #[test]
     fn meter_snapshots_are_sequenced() {
-        let published = PublishedLoudness::default();
+        let published = PublishedMetrics::default();
         assert_eq!(published.read(), None);
 
-        published.publish(-18.5);
+        published.publish(ProcessMetrics {
+            source: MeterReading {
+                loudness_lufs: -18.5,
+                true_peak_dbtp: Some(-4.0),
+                using_short_term: true,
+            },
+            output: Some(MeterReading {
+                loudness_lufs: -13.2,
+                true_peak_dbtp: Some(-1.1),
+                using_short_term: true,
+            }),
+            limiter_reduction_db: 0.5,
+            maximum_limiter_reduction_db: 1.0,
+        });
         assert_eq!(
             published.read(),
             Some(MeterSnapshot {
                 sequence: 1,
-                loudness_lufs: -18.5,
+                source_loudness_lufs: -18.5,
+                source_true_peak_dbtp: Some(-4.0),
+                output_loudness_lufs: Some(-13.2),
+                output_true_peak_dbtp: Some(-1.1),
+                limiter_reduction_db: 0.5,
+                maximum_limiter_reduction_db: 1.0,
             })
         );
 
-        published.publish(-13.0);
+        published.publish(ProcessMetrics {
+            source: MeterReading {
+                loudness_lufs: -13.0,
+                true_peak_dbtp: None,
+                using_short_term: false,
+            },
+            output: None,
+            limiter_reduction_db: 0.0,
+            maximum_limiter_reduction_db: 1.0,
+        });
         assert_eq!(
             published.read(),
             Some(MeterSnapshot {
                 sequence: 2,
-                loudness_lufs: -13.0,
+                source_loudness_lufs: -13.0,
+                source_true_peak_dbtp: None,
+                output_loudness_lufs: None,
+                output_true_peak_dbtp: None,
+                limiter_reduction_db: 0.0,
+                maximum_limiter_reduction_db: 1.0,
             })
         );
     }

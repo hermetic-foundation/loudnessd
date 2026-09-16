@@ -32,6 +32,7 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
+          loudnessd = self.packages.${system}.default;
           moduleConfiguration = nixpkgs.lib.nixosSystem {
             inherit system;
             modules = [
@@ -65,7 +66,37 @@
           externalService = externalModuleConfiguration.config.systemd.user.services.loudnessd;
         in
         {
-          package = self.packages.${system}.default;
+          package = loudnessd;
+          rustfmt =
+            pkgs.runCommand "loudnessd-rustfmt-check"
+              {
+                nativeBuildInputs = [
+                  pkgs.cargo
+                  pkgs.rustfmt
+                ];
+                source = loudnessd.src;
+              }
+              ''
+                cp -r "$source" source
+                chmod -R u+w source
+                cd source
+                cargo fmt --check
+                touch "$out"
+              '';
+          clippy = loudnessd.overrideAttrs (old: {
+            pname = "loudnessd-clippy-check";
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.clippy ];
+            buildPhase = ''
+              runHook preBuild
+              cargo clippy --offline --all-targets -- -D warnings
+              runHook postBuild
+            '';
+            doCheck = false;
+            installPhase = ''
+              touch "$out"
+            '';
+            postInstall = "";
+          });
           module =
             assert builtins.elem "graphical-session.target" service.wantedBy;
             assert builtins.elem "pipewire.service" service.partOf;

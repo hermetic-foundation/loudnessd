@@ -121,6 +121,7 @@ fn route_status(health: RouteHealth) -> RouteStatus {
     match health {
         RouteHealth::Healthy => RouteStatus::Healthy,
         RouteHealth::Superseded => RouteStatus::Superseded,
+        RouteHealth::EndpointsGone => RouteStatus::Broken,
         RouteHealth::Broken => RouteStatus::Broken,
     }
 }

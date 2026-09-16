@@ -143,6 +143,21 @@ pub fn bypass<B: RouteBackend<LinkSet = L>, L>(
     })
 }
 
+/// Release a stale or superseded route without recreating its original links.
+/// The graph either lost those endpoints or already owns a newer direct route.
+pub fn release<B: RouteBackend<LinkSet = L>, L>(
+    backend: &mut B,
+    route: ActiveRoute<L>,
+) -> Result<(), TransitionError<B::Error>> {
+    let deactivation = backend.set_filter_active(route.plan.filter_node_id, false);
+    backend.destroy_links(route.replacements);
+    deactivation.map_err(|error| TransitionError {
+        operation: TransitionOperation::DeactivateFilter,
+        error,
+        rollback_error: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,5 +370,29 @@ mod tests {
         );
         assert_eq!(error.route.plan().filter_node_id, 30);
         assert_eq!(backend.events, ["create"]);
+    }
+
+    #[test]
+    fn releasing_stale_route_never_attempts_direct_restore() {
+        let mut backend = FakeBackend::default();
+        let route = install(&mut backend, plan()).unwrap();
+        backend.events.clear();
+
+        release(&mut backend, route).unwrap();
+
+        assert_eq!(backend.events, ["deactivate", "destroy"]);
+    }
+
+    #[test]
+    fn releasing_stale_route_destroys_owned_links_after_deactivation_failure() {
+        let mut backend = FakeBackend::default();
+        let route = install(&mut backend, plan()).unwrap();
+        backend.events.clear();
+        backend.failure = Some(Failure::Deactivate);
+
+        let error = release(&mut backend, route).unwrap_err();
+
+        assert_eq!(error.operation, TransitionOperation::DeactivateFilter);
+        assert_eq!(backend.events, ["deactivate", "destroy"]);
     }
 }

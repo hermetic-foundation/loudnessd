@@ -23,7 +23,7 @@ use crate::{
     pipewire_links::OwnedLinks,
     pipewire_route_backend::PipewireRouteBackend,
     recovery::{RecoveryJournal, path_for_socket},
-    route_transaction::{ActiveRoute, bypass, install},
+    route_transaction::{ActiveRoute, bypass, install, release},
     routing::{RouteHealth, RoutePlanError, plan_route, route_health},
     runtime_config::RuntimeConfig,
     status::{DaemonStatus, SkippedStreamStatus},
@@ -219,8 +219,31 @@ impl Daemon {
                 continue;
             };
             self.skipped.remove(&node_id);
-            if health == RouteHealth::Superseded {
-                eprintln!("loudnessd: stream {node_id} route changed; reconnecting");
+            if matches!(health, RouteHealth::Superseded | RouteHealth::EndpointsGone) {
+                let result = {
+                    let mut backend = PipewireRouteBackend::new(
+                        &self.main_loop,
+                        &self.core,
+                        &self.registry,
+                        Rc::clone(&self.graph),
+                        &mut filter,
+                        &mut self.retained_direct_links,
+                    );
+                    release(&mut backend, route)
+                };
+                let reason = match health {
+                    RouteHealth::Superseded => "route changed",
+                    RouteHealth::EndpointsGone => "route endpoint disappeared",
+                    RouteHealth::Healthy | RouteHealth::Broken => unreachable!(),
+                };
+                if let Err(error) = result {
+                    eprintln!(
+                        "loudnessd: stream {node_id} {reason}; filter deactivation failed: {}",
+                        error.error
+                    );
+                } else {
+                    eprintln!("loudnessd: stream {node_id} {reason}; reconnecting");
+                }
                 self.sync_recovery_journal(None);
                 continue;
             }

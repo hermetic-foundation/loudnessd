@@ -64,6 +64,7 @@ pub struct RouteTeardown {
 pub enum RouteHealth {
     Healthy,
     Superseded,
+    EndpointsGone,
     Broken,
 }
 
@@ -112,9 +113,24 @@ pub fn route_health(plan: &RoutePlan, graph: &GraphState) -> RouteHealth {
                 || link.input_node_id == plan.stream_node_id)
     });
     if has_new_direct_route {
-        RouteHealth::Superseded
-    } else {
+        return RouteHealth::Superseded;
+    }
+
+    let original_endpoints_present = plan.channels.iter().all(|channel| {
+        graph.contains_port(
+            channel.original.output.node_id,
+            channel.original.output.port_id,
+            PortDirection::Output,
+        ) && graph.contains_port(
+            channel.original.input.node_id,
+            channel.original.input.port_id,
+            PortDirection::Input,
+        )
+    });
+    if original_endpoints_present {
         RouteHealth::Broken
+    } else {
+        RouteHealth::EndpointsGone
     }
 }
 
@@ -440,15 +456,51 @@ mod tests {
                 },
             }],
         };
-        let healthy = graph_with([link(41, 10, 11, 30, 31), link(42, 30, 32, 20, 21)]);
+        let mut healthy = GraphState::default();
+        for discovered_port in [
+            port(11, 10, PortDirection::Output, "FL"),
+            port(21, 20, PortDirection::Input, "FL"),
+            port(31, 30, PortDirection::Input, "FL"),
+            port(32, 30, PortDirection::Output, "FL"),
+        ] {
+            healthy.insert(crate::pipewire_backend::GraphObject::Port(discovered_port));
+        }
+        for discovered_link in [link(41, 10, 11, 30, 31), link(42, 30, 32, 20, 21)] {
+            healthy.insert(crate::pipewire_backend::GraphObject::Link(discovered_link));
+        }
         assert_eq!(route_health(&plan, &healthy), RouteHealth::Healthy);
+
+        healthy.remove_id(21);
+        assert_eq!(route_health(&plan, &healthy), RouteHealth::EndpointsGone);
+        healthy.insert(crate::pipewire_backend::GraphObject::Port(port(
+            21,
+            99,
+            PortDirection::Input,
+            "FL",
+        )));
+        assert_eq!(route_health(&plan, &healthy), RouteHealth::EndpointsGone);
 
         let superseded = graph_with([link(43, 10, 11, 50, 51)]);
         assert_eq!(route_health(&plan, &superseded), RouteHealth::Superseded);
 
+        let mut broken = GraphState::default();
+        broken.insert(crate::pipewire_backend::GraphObject::Port(port(
+            11,
+            10,
+            PortDirection::Output,
+            "FL",
+        )));
+        broken.insert(crate::pipewire_backend::GraphObject::Port(port(
+            21,
+            20,
+            PortDirection::Input,
+            "FL",
+        )));
+        assert_eq!(route_health(&plan, &broken), RouteHealth::Broken);
+
         assert_eq!(
             route_health(&plan, &GraphState::default()),
-            RouteHealth::Broken
+            RouteHealth::EndpointsGone
         );
     }
 

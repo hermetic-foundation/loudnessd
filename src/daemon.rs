@@ -16,7 +16,7 @@ use pipewire::{context::ContextRc, loop_::Timeout, main_loop::MainLoopRc};
 use signal_hook::consts::signal::{SIGINT, SIGTERM};
 
 use crate::{
-    ControllerBank, ControllerConfig, SignalDomain, UserConfig,
+    ControllerBank, SignalDomain, UserConfig,
     ipc::{ControlServer, write_response},
     pipewire_backend::{
         DiscoveredStream, GraphState, PortDirection as GraphPortDirection, track_graph,
@@ -24,17 +24,17 @@ use crate::{
     pipewire_filter::{ConnectedFilter, PortDirection, UnconnectedFilter},
     pipewire_links::OwnedLinks,
     pipewire_route_backend::PipewireRouteBackend,
-    process_metrics,
     recovery::{RecoveryJournal, path_for_socket},
     route_transaction::{ActiveRoute, bypass, install},
     routing::{RouteHealth, RoutePlanError, plan_route, route_health},
     runtime_config::RuntimeConfig,
-    status::{ControlStatus, DaemonStatus, RouteStatus, StreamLifecycle, StreamStatus},
+    status::DaemonStatus,
     stream_control::StreamControl,
 };
 
 mod command;
 mod recovery;
+mod reporting;
 
 use command::Command;
 
@@ -153,69 +153,12 @@ impl Daemon {
     }
 
     fn status(&self) -> DaemonStatus {
-        let graph = self.graph.borrow();
-        let mut streams: Vec<_> = self
-            .managed
-            .iter()
-            .map(|(node_id, managed)| {
-                let (lifecycle, route, control) = match managed {
-                    ManagedStream::Connecting { control, .. } => (
-                        StreamLifecycle::Connecting,
-                        RouteStatus::Connecting,
-                        control,
-                    ),
-                    ManagedStream::Active { control, route, .. } => (
-                        StreamLifecycle::Active,
-                        route_status(route_health(route.plan(), &graph)),
-                        control,
-                    ),
-                };
-                let update = control.last_update();
-                let meter = update.map(|update| update.meter);
-                let controller_config = self.controllers.config(control.domain());
-                let gain_db = update
-                    .map(|update| update.decision.target_gain_db())
-                    .unwrap_or(0.0);
-                let gain_clamped = gain_is_limited(
-                    controller_config,
-                    gain_db,
-                    meter.map(|meter| meter.source_loudness_lufs),
-                );
-                StreamStatus {
-                    node_id: *node_id,
-                    domain: domain_name(control.domain()).to_owned(),
-                    application: control.application_id().to_owned(),
-                    meter_sequence: meter.map(|meter| meter.sequence),
-                    lifecycle,
-                    route,
-                    control: update
-                        .map(|update| control_status(update.decision))
-                        .unwrap_or(ControlStatus::Waiting),
-                    target_lufs: controller_config.target_lufs,
-                    source_lufs: meter.map(|meter| meter.source_loudness_lufs),
-                    source_peak_dbtp: meter.and_then(|meter| meter.source_true_peak_dbtp),
-                    output_lufs: meter.and_then(|meter| meter.output_loudness_lufs),
-                    output_peak_dbtp: meter.and_then(|meter| meter.output_true_peak_dbtp),
-                    gain_db,
-                    gain_clamped,
-                    limiter_db: meter.map(|meter| meter.limiter_reduction_db).unwrap_or(0.0),
-                    limiter_max_db: meter
-                        .map(|meter| meter.maximum_limiter_reduction_db)
-                        .unwrap_or(0.0),
-                }
-            })
-            .collect();
-        streams.sort_by_key(|stream| stream.node_id);
-        DaemonStatus {
-            enabled: self.enabled,
-            managed: streams.len(),
-            active: streams
-                .iter()
-                .filter(|stream| stream.lifecycle == StreamLifecycle::Active)
-                .count(),
-            process: process_metrics::read(),
-            streams,
-        }
+        reporting::snapshot(
+            self.enabled,
+            &self.controllers,
+            &self.managed,
+            &self.graph.borrow(),
+        )
     }
 
     fn reconfigure(&mut self, next: RuntimeConfig) -> Result<(), String> {
@@ -579,34 +522,6 @@ impl Daemon {
     }
 }
 
-fn gain_is_limited(config: ControllerConfig, gain_db: f32, source_lufs: Option<f32>) -> bool {
-    const TOLERANCE_DB: f32 = 0.001;
-    (gain_db - config.maximum_boost_db).abs() < TOLERANCE_DB
-        || (gain_db + config.maximum_cut_db).abs() < TOLERANCE_DB
-        || source_lufs.is_some_and(|source_lufs| {
-            let required_gain_db = config.target_lufs - source_lufs;
-            required_gain_db > config.maximum_boost_db + TOLERANCE_DB
-                || required_gain_db < -config.maximum_cut_db - TOLERANCE_DB
-        })
-}
-
-fn control_status(decision: crate::Decision) -> ControlStatus {
-    match decision {
-        crate::Decision::Bypass => ControlStatus::Bypass,
-        crate::Decision::Silence { .. } => ControlStatus::Silence,
-        crate::Decision::Hold { .. } => ControlStatus::Settled,
-        crate::Decision::Adjust { .. } => ControlStatus::Converging,
-    }
-}
-
-fn route_status(health: RouteHealth) -> RouteStatus {
-    match health {
-        RouteHealth::Healthy => RouteStatus::Healthy,
-        RouteHealth::Superseded => RouteStatus::Superseded,
-        RouteHealth::Broken => RouteStatus::Broken,
-    }
-}
-
 fn application_id(stream: &DiscoveredStream) -> String {
     stream
         .application_id
@@ -700,19 +615,5 @@ mod tests {
         };
 
         assert_eq!(application_id(&stream), "node-42");
-    }
-
-    #[test]
-    fn reports_gain_limited_before_slew_reaches_the_limit() {
-        let config = ControllerConfig::default();
-
-        assert!(gain_is_limited(config, 3.0, Some(-40.0)));
-        assert!(gain_is_limited(
-            config,
-            config.maximum_boost_db,
-            Some(-20.0)
-        ));
-        assert!(!gain_is_limited(config, 3.0, Some(-16.0)));
-        assert!(!gain_is_limited(config, 0.0, None));
     }
 }

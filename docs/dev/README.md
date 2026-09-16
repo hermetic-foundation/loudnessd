@@ -154,10 +154,19 @@ buffers.
 The Nix flake checks the Rust package and evaluates the NixOS module, including
 its generated immutable TOML and graphical-session user unit.
 
-`tests/live/playback-soak.sh` drives two varied 48 kHz stereo streams into a
-disposable null sink, runs the candidate daemon for a bounded duration, and
-records NDJSON status without retaining audio. Its exit trap removes the
-streams and sink and restores the ordinary `loudnessd.service`.
+`tests/live/playback-soak.sh` starts a private PipeWire daemon and a policy-only
+WirePlumber instance in a temporary runtime directory, then drives two varied
+48 kHz stereo streams into its disposable null sink. Hardware monitors are not
+loaded. The candidate daemon, IPC socket, graph, fixtures, and recovery journal
+therefore cannot observe or modify desktop applications or hardware. Before
+monitoring, the harness destroys and replaces the sink while both application
+streams remain alive, and requires both managed routes to return healthy. This
+reproduces endpoint replacement without exposing interactive audio to the
+recovery path. Monitoring then requires exactly two active streams. The harness
+retains NDJSON status, private server and session-manager logs, and a final
+`pw-top` snapshot that must contain both fixture node IDs with zero errors, but
+no audio. Its exit trap removes the complete private runtime and never starts,
+stops, or reloads the user's ordinary PipeWire or loudnessd services.
 
 Native desktop validation on NixOS additionally covered:
 

@@ -25,6 +25,14 @@ lifecycle behavior depend on a live PipeWire graph.
   `skipped_stream_observations`.
 - The soak includes continuous music, speech, intermittent browser audio,
   silence, and content that reaches both boost and cut paths.
+- Synthetic extended soaks run against a private PipeWire daemon and may not
+  discover, route, or load interactive desktop, game, voice, or hardware
+  streams. A final short integration run separately validates the real graph.
+- Before each synthetic soak, replacing the private sink while fixture streams
+  remain alive must return every intended stream to a healthy managed route
+  without a daemon restart, skipped stream, or PipeWire error.
+- Every intended generator finishes with zero PipeWire errors, and the harness
+  retains its final error-counter snapshot with the release evidence.
 - For non-silent windows that are not gain-clamped or limiter-bound, at least
   95% of post-filter short-term readings settle within `1.5 LU` of the target
   after the configured slew time.

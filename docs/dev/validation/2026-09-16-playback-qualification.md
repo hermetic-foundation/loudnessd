@@ -68,30 +68,45 @@ post-filter observability rather than addressing an observed instability.
 - Exercise limiter-bound material and verify the configured peak ceiling.
 - Complete the lifecycle and recovery matrix from the release gates.
 
-## Eight-hour soak interim finding
+## Failed extended soak
 
-An eight-hour run started at 2026-09-16 10:39:26 CDT with candidate
-`/nix/store/0998kh4y7777zawdzrvmsdlsjsva19ca-loudnessd-0.1.0`. The run remains
-active, so these observations are evidence from its first 2.4 hours rather
-than a final result:
+An intended eight-hour run started at 2026-09-16 10:39:26 CDT with candidate
+`/nix/store/0998kh4y7777zawdzrvmsdlsjsva19ca-loudnessd-0.1.0`. It was stopped
+after 3 hours 44 minutes because it began affecting real Skyrim and ChatGPT
+voice streams on the host. This is a failed release run, not partial evidence
+that can be promoted into a pass.
 
-| Measurement | Interim result |
+| Measurement | Result at stop |
 | --- | ---: |
-| Monitor samples | 8,710 |
+| Monitor samples | 13,391 |
 | Daemon restarts | 0 |
-| Unhealthy route observations | 0 |
-| Resident-memory range | 6.15-9.28 MiB |
-| Average process CPU | 3.50% of one core |
-| Continuous settled samples within 1.5 LU | 6,350 / 6,351 |
-| Intermittent settled samples within 1.5 LU | 5,695 / 6,059 |
-| Maximum intermittent output true peak | +0.535 dBTP |
-| Intermittent samples above the -1 dBTP ceiling | 8,462 / 8,709 |
+| Unhealthy route observations | 1 |
+| Resident-memory range | 6.15-10.57 MiB |
+| Average process CPU | 3.65% of one core |
+| Continuous settled samples within 1.5 LU | 9,707 / 9,708 |
+| Intermittent settled samples within 1.5 LU | 8,693 / 9,258 |
+| Maximum intermittent output true peak | +0.767 dBTP |
+| Intermittent samples above the -1 dBTP ceiling | 13,143 / 13,390 |
 | Reported intermittent limiter reduction | 0.0 dB |
 
-The run therefore fails the true-peak release gate even though routing,
-continuity, convergence, CPU, and memory remain stable so far. The current
-limiter observes only sample peaks; the post-filter BS.1770 meter proves that
-inter-sample peaks escape it. This is a release blocker. The required fix is a
-real true-peak limiter with lookahead, followed by a fresh full-duration soak
-on the release candidate. Lowering the release threshold or treating sample
-peak as true peak is not an acceptable resolution.
+The run failed two independent release gates. First, its sample-peak limiter
+allowed sustained inter-sample overs. The post-filter BS.1770 meter proves the
+configured true-peak ceiling was not enforced. Second, after Skyrim started,
+the daemon twice timed out restoring broken routes and attempted several
+duplicate stream insertions. Both generator streams accumulated hundreds of
+PipeWire errors (more than 600 each when observed live), and a simultaneous
+ChatGPT voice call developed audible intermittent crackling.
+
+Stopping the transient unit ran the harness cleanup. Its trap restarted the
+ordinary service, which was then explicitly disabled through `loudnessd msg
+disable` so its ordered bypass restored direct routes. A post-cleanup graph
+inspection found no loudnessd or soak nodes, and a fresh `pw-top` sample showed
+zero errors for Skyrim and both ChatGPT streams. PipeWire and the graphical
+session were not restarted.
+
+The true-peak implementation was replaced after this run, but it still needs a
+fresh full-duration qualification. The next extended harness must run in an
+isolated PipeWire instance or otherwise exclude unrelated host streams; it may
+not attach an experimental candidate to interactive game, voice, or desktop
+audio. It must also persist generator error counters so continuity failures
+remain auditable after cleanup.

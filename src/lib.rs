@@ -13,6 +13,7 @@ pub mod recovery;
 pub mod route_transaction;
 pub mod routing;
 pub mod runtime_config;
+pub mod status;
 pub mod stream_control;
 
 pub use control::{

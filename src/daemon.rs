@@ -28,6 +28,7 @@ use crate::{
     route_transaction::{ActiveRoute, bypass, install},
     routing::{RouteHealth, RoutePlanError, plan_route, route_health},
     runtime_config::RuntimeConfig,
+    status::{ControlStatus, DaemonStatus, RouteStatus, StreamLifecycle, StreamStatus},
     stream_control::StreamControl,
 };
 
@@ -95,65 +96,9 @@ impl Daemon {
     fn handle_request(&mut self, request: &str) -> Result<String, String> {
         let fields: Vec<_> = request.split('\t').collect();
         match fields.as_slice() {
-            ["status"] => {
-                let active = self
-                    .managed
-                    .values()
-                    .filter(|stream| matches!(stream, ManagedStream::Active { .. }))
-                    .count();
-                let mut lines = vec![format!(
-                    "enabled={} managed={} active={}\n",
-                    self.enabled,
-                    self.managed.len(),
-                    active
-                )];
-                let mut streams: Vec<_> = self.managed.iter().collect();
-                streams.sort_by_key(|(node_id, _)| **node_id);
-                for (node_id, managed) in streams {
-                    let (state, route, control) = match managed {
-                        ManagedStream::Connecting { control, .. } => {
-                            ("connecting", "connecting", control)
-                        }
-                        ManagedStream::Active { control, route, .. } => {
-                            let graph = self.graph.borrow();
-                            (
-                                "active",
-                                route_health_name(route_health(route.plan(), &graph)),
-                                control,
-                            )
-                        }
-                    };
-                    let domain = domain_name(control.domain());
-                    if let Some(update) = control.last_update() {
-                        let meter = update.meter;
-                        lines.push(format!(
-                            "stream={} domain={} application={} state={} route={} control={} source_lufs={:.2} source_peak_dbtp={} output_lufs={} output_peak_dbtp={} gain_db={:.2} limiter_db={:.2} limiter_max_db={:.2}\n",
-                            node_id,
-                            domain,
-                            control.application_id(),
-                            state,
-                            route,
-                            decision_state(update.decision),
-                            meter.source_loudness_lufs,
-                            format_optional_metric(meter.source_true_peak_dbtp),
-                            format_optional_metric(meter.output_loudness_lufs),
-                            format_optional_metric(meter.output_true_peak_dbtp),
-                            update.decision.target_gain_db(),
-                            meter.limiter_reduction_db,
-                            meter.maximum_limiter_reduction_db,
-                        ));
-                    } else {
-                        lines.push(format!(
-                            "stream={} domain={} application={} state={} route={} control=waiting source_lufs=unavailable source_peak_dbtp=unavailable output_lufs=unavailable output_peak_dbtp=unavailable gain_db=0.00 limiter_db=0.00 limiter_max_db=0.00\n",
-                            node_id,
-                            domain,
-                            control.application_id(),
-                            state,
-                            route,
-                        ));
-                    }
-                }
-                Ok(lines.concat())
+            ["status"] => Ok(self.status().to_text()),
+            ["status-json"] => {
+                serde_json::to_string(&self.status()).map_err(|error| error.to_string())
             }
             ["reload"] => {
                 let source = std::fs::read_to_string(&self.config_path)
@@ -189,7 +134,62 @@ impl Daemon {
                 .runtime_config
                 .export_toml()
                 .map_err(|error| error.to_string()),
-            _ => Err("usage: loudnessd msg status|reload|enable|disable|set APP playback|capture on|off|reset APP|export".to_owned()),
+            _ => Err("usage: loudnessd msg status|status-json|reload|enable|disable|set APP playback|capture on|off|reset APP|export".to_owned()),
+        }
+    }
+
+    fn status(&self) -> DaemonStatus {
+        let graph = self.graph.borrow();
+        let mut streams: Vec<_> = self
+            .managed
+            .iter()
+            .map(|(node_id, managed)| {
+                let (lifecycle, route, control) = match managed {
+                    ManagedStream::Connecting { control, .. } => (
+                        StreamLifecycle::Connecting,
+                        RouteStatus::Connecting,
+                        control,
+                    ),
+                    ManagedStream::Active { control, route, .. } => (
+                        StreamLifecycle::Active,
+                        route_status(route_health(route.plan(), &graph)),
+                        control,
+                    ),
+                };
+                let update = control.last_update();
+                let meter = update.map(|update| update.meter);
+                StreamStatus {
+                    node_id: *node_id,
+                    domain: domain_name(control.domain()).to_owned(),
+                    application: control.application_id().to_owned(),
+                    lifecycle,
+                    route,
+                    control: update
+                        .map(|update| control_status(update.decision))
+                        .unwrap_or(ControlStatus::Waiting),
+                    source_lufs: meter.map(|meter| meter.source_loudness_lufs),
+                    source_peak_dbtp: meter.and_then(|meter| meter.source_true_peak_dbtp),
+                    output_lufs: meter.and_then(|meter| meter.output_loudness_lufs),
+                    output_peak_dbtp: meter.and_then(|meter| meter.output_true_peak_dbtp),
+                    gain_db: update
+                        .map(|update| update.decision.target_gain_db())
+                        .unwrap_or(0.0),
+                    limiter_db: meter.map(|meter| meter.limiter_reduction_db).unwrap_or(0.0),
+                    limiter_max_db: meter
+                        .map(|meter| meter.maximum_limiter_reduction_db)
+                        .unwrap_or(0.0),
+                }
+            })
+            .collect();
+        streams.sort_by_key(|stream| stream.node_id);
+        DaemonStatus {
+            enabled: self.enabled,
+            managed: streams.len(),
+            active: streams
+                .iter()
+                .filter(|stream| stream.lifecycle == StreamLifecycle::Active)
+                .count(),
+            streams,
         }
     }
 
@@ -640,27 +640,21 @@ fn recovery_endpoints_present(graph: &GraphState, specs: &[crate::routing::LinkS
     })
 }
 
-fn decision_state(decision: crate::Decision) -> &'static str {
+fn control_status(decision: crate::Decision) -> ControlStatus {
     match decision {
-        crate::Decision::Bypass => "bypass",
-        crate::Decision::Silence { .. } => "silence",
-        crate::Decision::Hold { .. } => "settled",
-        crate::Decision::Adjust { .. } => "converging",
+        crate::Decision::Bypass => ControlStatus::Bypass,
+        crate::Decision::Silence { .. } => ControlStatus::Silence,
+        crate::Decision::Hold { .. } => ControlStatus::Settled,
+        crate::Decision::Adjust { .. } => ControlStatus::Converging,
     }
 }
 
-fn route_health_name(health: RouteHealth) -> &'static str {
+fn route_status(health: RouteHealth) -> RouteStatus {
     match health {
-        RouteHealth::Healthy => "healthy",
-        RouteHealth::Superseded => "superseded",
-        RouteHealth::Broken => "broken",
+        RouteHealth::Healthy => RouteStatus::Healthy,
+        RouteHealth::Superseded => RouteStatus::Superseded,
+        RouteHealth::Broken => RouteStatus::Broken,
     }
-}
-
-fn format_optional_metric(value: Option<f32>) -> String {
-    value
-        .map(|value| format!("{value:.2}"))
-        .unwrap_or_else(|| "unavailable".to_owned())
 }
 
 fn parse_domain(value: &str) -> Result<SignalDomain, String> {

@@ -14,7 +14,7 @@ use loudnessd::{
 fn usage() {
     eprintln!(
         "loudnessd [--config PATH] [--daemon | --list-streams]\n\n\
-         loudnessd msg status|reload|enable|disable|export\n\
+         loudnessd msg status|status-json|reload|enable|disable|export\n\
          loudnessd msg set APP playback|capture on|off\n\
          loudnessd msg reset APP\n\n\
          Daemon mode without --config uses $XDG_CONFIG_HOME/loudnessd/config.toml.\n\n\

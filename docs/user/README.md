@@ -117,6 +117,7 @@ or temporarily change the running policy with:
 
 ```console
 loudnessd msg status
+loudnessd msg status-json
 loudnessd msg disable
 loudnessd msg enable
 loudnessd msg reload
@@ -124,6 +125,9 @@ loudnessd msg set application-a playback off
 loudnessd msg set application-a capture on
 loudnessd msg reset application-a
 ```
+
+`status-json` reports the same daemon, route, controller, source, output, peak,
+gain, and limiter state as structured JSON for soak tests and monitoring tools.
 
 `disable` bypasses every active stream but leaves the daemon available.
 `reload` rereads the original `--config` path. `set` and `reset` are in-memory

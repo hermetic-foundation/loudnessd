@@ -24,6 +24,7 @@ use crate::{
     pipewire_filter::{ConnectedFilter, PortDirection, UnconnectedFilter},
     pipewire_links::OwnedLinks,
     pipewire_route_backend::PipewireRouteBackend,
+    process_metrics,
     recovery::{RecoveryJournal, path_for_socket},
     route_transaction::{ActiveRoute, bypass, install},
     routing::{RouteHealth, RoutePlanError, plan_route, route_health},
@@ -196,6 +197,7 @@ impl Daemon {
                 .iter()
                 .filter(|stream| stream.lifecycle == StreamLifecycle::Active)
                 .count(),
+            process: process_metrics::read(),
             streams,
         }
     }

@@ -245,6 +245,7 @@ name = "loudnessd"
 version = "0.1.0"
 dependencies = [
  "ebur128-stream",
+ "libc",
  "pipewire",
  "serde",
  "serde_json",

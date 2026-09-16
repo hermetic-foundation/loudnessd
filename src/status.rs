@@ -48,11 +48,20 @@ pub struct StreamStatus {
     pub limiter_max_db: f32,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProcessStatus {
+    pub rss_bytes: u64,
+    pub user_cpu_ticks: u64,
+    pub system_cpu_ticks: u64,
+    pub clock_ticks_per_second: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct DaemonStatus {
     pub enabled: bool,
     pub managed: usize,
     pub active: usize,
+    pub process: Option<ProcessStatus>,
     pub streams: Vec<StreamStatus>,
 }
 
@@ -138,6 +147,12 @@ mod tests {
             enabled: true,
             managed: 1,
             active: 1,
+            process: Some(ProcessStatus {
+                rss_bytes: 1_572_864,
+                user_cpu_ticks: 10,
+                system_cpu_ticks: 5,
+                clock_ticks_per_second: 100,
+            }),
             streams: vec![StreamStatus {
                 node_id: 42,
                 domain: "playback".to_owned(),
@@ -164,6 +179,7 @@ mod tests {
 
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["streams"][0]["route"], "healthy");
+        assert_eq!(json["process"]["rss_bytes"], 1_572_864);
         assert_eq!(json["streams"][0]["meter_sequence"], 12);
         assert_eq!(json["streams"][0]["target_lufs"], -13.0);
         let output_lufs = json["streams"][0]["output_lufs"].as_f64().unwrap();

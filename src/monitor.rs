@@ -47,6 +47,11 @@ pub struct SoakReport {
     pub convergence_passing_observations: u64,
     pub convergence_ratio: Option<f64>,
     pub maximum_limiter_reduction_db: f32,
+    pub initial_rss_bytes: Option<u64>,
+    pub final_rss_bytes: Option<u64>,
+    pub peak_rss_bytes: Option<u64>,
+    pub rss_growth_bytes: Option<i64>,
+    pub average_cpu_percent: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -59,11 +64,30 @@ struct TimedStatus<'a> {
 struct SoakAccumulator {
     report: SoakReport,
     sequences: HashMap<u32, u64>,
+    initial_cpu_ticks: Option<u64>,
+    final_cpu_ticks: Option<u64>,
+    clock_ticks_per_second: Option<u64>,
 }
 
 impl SoakAccumulator {
     fn observe(&mut self, status: &DaemonStatus) {
         self.report.samples += 1;
+        if let Some(process) = &status.process {
+            self.report
+                .initial_rss_bytes
+                .get_or_insert(process.rss_bytes);
+            self.report.final_rss_bytes = Some(process.rss_bytes);
+            self.report.peak_rss_bytes = Some(
+                self.report
+                    .peak_rss_bytes
+                    .unwrap_or_default()
+                    .max(process.rss_bytes),
+            );
+            let cpu_ticks = process.user_cpu_ticks + process.system_cpu_ticks;
+            self.initial_cpu_ticks.get_or_insert(cpu_ticks);
+            self.final_cpu_ticks = Some(cpu_ticks);
+            self.clock_ticks_per_second = Some(process.clock_ticks_per_second);
+        }
         for stream in &status.streams {
             if stream.route != RouteStatus::Healthy {
                 self.report.unhealthy_route_observations += 1;
@@ -107,6 +131,21 @@ impl SoakAccumulator {
             (self.report.convergence_eligible_observations != 0).then(|| {
                 self.report.convergence_passing_observations as f64
                     / self.report.convergence_eligible_observations as f64
+            });
+        self.report.rss_growth_bytes = self
+            .report
+            .initial_rss_bytes
+            .zip(self.report.final_rss_bytes)
+            .map(|(initial, last)| last as i64 - initial as i64);
+        self.report.average_cpu_percent = self
+            .initial_cpu_ticks
+            .zip(self.final_cpu_ticks)
+            .zip(self.clock_ticks_per_second)
+            .and_then(|((initial, last), ticks_per_second)| {
+                let seconds = elapsed.as_secs_f64();
+                (seconds > 0.0 && ticks_per_second > 0).then(|| {
+                    last.saturating_sub(initial) as f64 / ticks_per_second as f64 / seconds * 100.0
+                })
             });
         self.report
     }
@@ -166,13 +205,19 @@ fn duration_milliseconds(duration: Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::status::StreamStatus;
+    use crate::status::{ProcessStatus, StreamStatus};
 
     fn status(sequence: u64, output_lufs: f32) -> DaemonStatus {
         DaemonStatus {
             enabled: true,
             managed: 1,
             active: 1,
+            process: Some(ProcessStatus {
+                rss_bytes: 2_000_000 + sequence * 1000,
+                user_cpu_ticks: sequence * 10,
+                system_cpu_ticks: sequence * 5,
+                clock_ticks_per_second: 100,
+            }),
             streams: vec![StreamStatus {
                 node_id: 9,
                 domain: "playback".to_owned(),
@@ -208,6 +253,10 @@ mod tests {
         assert_eq!(report.convergence_passing_observations, 2);
         assert_eq!(report.convergence_ratio, Some(2.0 / 3.0));
         assert_eq!(report.maximum_limiter_reduction_db, 0.4);
+        assert_eq!(report.initial_rss_bytes, Some(2_001_000));
+        assert_eq!(report.final_rss_bytes, Some(2_002_000));
+        assert_eq!(report.rss_growth_bytes, Some(1000));
+        assert_eq!(report.average_cpu_percent, Some(5.0));
     }
 
     #[test]

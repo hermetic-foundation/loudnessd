@@ -10,6 +10,7 @@ pub mod pipewire_backend;
 pub mod pipewire_filter;
 pub mod pipewire_links;
 pub mod pipewire_route_backend;
+mod process_metrics;
 pub mod recovery;
 pub mod route_transaction;
 pub mod routing;

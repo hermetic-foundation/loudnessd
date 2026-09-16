@@ -173,6 +173,43 @@ struct CallbackPort {
     gain: GainStage,
 }
 
+struct CycleBuffers {
+    pointers: [*mut f32; MAX_METER_CHANNELS],
+    len: usize,
+}
+
+impl CycleBuffers {
+    fn acquire(ports: &[CallbackPort], sample_count: u32) -> Option<Self> {
+        Self::acquire_with(ports, |port| {
+            // SAFETY: PipeWire owns the port and makes its DSP buffer valid for
+            // sample_count f32 samples for the duration of this process cycle.
+            unsafe { sys::pw_filter_get_dsp_buffer(port.as_ptr(), sample_count) }.cast::<f32>()
+        })
+    }
+
+    fn acquire_with(
+        ports: &[CallbackPort],
+        mut acquire: impl FnMut(NonNull<c_void>) -> *mut f32,
+    ) -> Option<Self> {
+        if ports.len() > MAX_METER_CHANNELS {
+            return None;
+        }
+        let mut pointers = [std::ptr::null_mut(); MAX_METER_CHANNELS];
+        for (index, port) in ports.iter().enumerate() {
+            pointers[index] = acquire(port.raw);
+        }
+        Some(Self {
+            pointers,
+            len: ports.len(),
+        })
+    }
+
+    fn get(&self, index: usize) -> Option<NonNull<f32>> {
+        debug_assert!(index < self.len);
+        NonNull::new(self.pointers[index])
+    }
+}
+
 #[derive(Default)]
 struct PublishedLoudness {
     version: AtomicU64,
@@ -228,55 +265,66 @@ unsafe extern "C" fn process(
     let Ok(sample_count) = u32::try_from(position.clock.duration) else {
         return;
     };
+    let Some(buffers) = CycleBuffers::acquire(&data.ports, sample_count) else {
+        return;
+    };
 
     let sample_rate =
         process_sample_rate(position, data.meter.as_ref().map(|meter| meter.sample_rate));
-    meter_source(data, sample_count, sample_rate);
+    meter_source(data, &buffers, sample_count, sample_rate);
 
     let target_gain_db = f32::from_bits(data.target_gain_bits.load(Ordering::Relaxed));
     for output_index in 0..data.ports.len() {
         if data.ports[output_index].direction != PortDirection::Output {
             continue;
         }
-        let input = data.ports.iter().find_map(|port| {
+        let input_index = data.ports.iter().enumerate().find_map(|(index, port)| {
             (port.direction == PortDirection::Input
                 && port.channel == data.ports[output_index].channel)
-                .then_some(port.raw)
+                .then_some(index)
         });
-        let Some(input) = input else { continue };
+        let Some(input_index) = input_index else {
+            continue;
+        };
         let output = &mut data.ports[output_index];
-        process_mono_port(
-            input,
-            output.raw,
+        let (Some(input), Some(output_buffer)) =
+            (buffers.get(input_index), buffers.get(output_index))
+        else {
+            continue;
+        };
+        process_mono_buffers(
+            input.as_ptr(),
+            output_buffer.as_ptr(),
             sample_count,
             &mut output.gain,
             target_gain_db,
         );
     }
-    limit_output_ports(data, sample_count, sample_rate);
+    limit_output_ports(data, &buffers, sample_count, sample_rate);
 }
 
-fn limit_output_ports(data: &mut FilterCallbackData, sample_count: u32, sample_rate: Option<u32>) {
+fn limit_output_ports(
+    data: &mut FilterCallbackData,
+    buffers: &CycleBuffers,
+    sample_count: u32,
+    sample_rate: Option<u32>,
+) {
     let Some(sample_rate) = sample_rate else {
         return;
     };
     let mut outputs = [std::ptr::null_mut(); MAX_METER_CHANNELS];
     let mut output_count = 0;
-    for port in data
-        .ports
-        .iter()
-        .filter(|port| port.direction == PortDirection::Output)
-    {
+    for (index, port) in data.ports.iter().enumerate() {
+        if port.direction != PortDirection::Output {
+            continue;
+        }
         if output_count == MAX_METER_CHANNELS {
             return;
         }
-        // PipeWire owns this buffer for the duration of the process callback.
-        let samples =
-            unsafe { sys::pw_filter_get_dsp_buffer(port.raw.as_ptr(), sample_count) }.cast::<f32>();
-        if samples.is_null() {
-            return;
-        }
-        outputs[output_count] = samples;
+        let Some(output) = buffers.get(index) else {
+            continue;
+        };
+        outputs[output_count] = output.as_ptr();
         output_count += 1;
     }
     for sample_index in 0..sample_count as usize {
@@ -304,7 +352,12 @@ fn process_sample_rate(
     rate.denom.checked_div(rate.num).filter(|rate| *rate > 0)
 }
 
-fn meter_source(data: &mut FilterCallbackData, sample_count: u32, sample_rate: Option<u32>) {
+fn meter_source(
+    data: &mut FilterCallbackData,
+    buffers: &CycleBuffers,
+    sample_count: u32,
+    sample_rate: Option<u32>,
+) {
     let Some(sample_rate) = sample_rate else {
         return;
     };
@@ -320,25 +373,20 @@ fn meter_source(data: &mut FilterCallbackData, sample_count: u32, sample_rate: O
     }
     let mut channels = [&[][..]; MAX_METER_CHANNELS];
     let mut channel_count = 0;
-    for port in data
-        .ports
-        .iter()
-        .filter(|port| port.direction == PortDirection::Input)
-    {
-        if channel_count == MAX_METER_CHANNELS {
-            return;
+    for (index, port) in data.ports.iter().enumerate() {
+        if port.direction != PortDirection::Input {
+            continue;
         }
-        // SAFETY: PipeWire keeps the mapped input valid for sample_count f32
-        // samples for the duration of this process callback.
-        let samples =
-            unsafe { sys::pw_filter_get_dsp_buffer(port.raw.as_ptr(), sample_count) }.cast::<f32>();
-        if samples.is_null() {
+        if channel_count == MAX_METER_CHANNELS {
             return;
         }
         // SAFETY: The pointer and length follow from the PipeWire DSP buffer
         // contract above, and the slice does not escape this callback.
+        let Some(input) = buffers.get(index) else {
+            return;
+        };
         channels[channel_count] =
-            unsafe { std::slice::from_raw_parts(samples, sample_count as usize) };
+            unsafe { std::slice::from_raw_parts(input.as_ptr(), sample_count as usize) };
         channel_count += 1;
     }
     if channel_count == 0 {
@@ -350,23 +398,13 @@ fn meter_source(data: &mut FilterCallbackData, sample_count: u32, sample_rate: O
     }
 }
 
-fn process_mono_port(
-    input: NonNull<c_void>,
-    output: NonNull<c_void>,
+fn process_mono_buffers(
+    input: *mut f32,
+    output: *mut f32,
     sample_count: u32,
     gain: &mut GainStage,
     target_gain_db: f32,
 ) {
-    // SAFETY: PipeWire owns both port data pointers and makes their mapped DSP
-    // buffers valid for sample_count f32 samples during the process callback.
-    let input =
-        unsafe { sys::pw_filter_get_dsp_buffer(input.as_ptr(), sample_count) }.cast::<f32>();
-    let output =
-        unsafe { sys::pw_filter_get_dsp_buffer(output.as_ptr(), sample_count) }.cast::<f32>();
-    if input.is_null() || output.is_null() {
-        return;
-    }
-
     // SAFETY: Both PipeWire port buffers are valid for sample_count f32
     // samples for the duration of this process cycle.
     let input = unsafe { std::slice::from_raw_parts(input, sample_count as usize) };
@@ -761,6 +799,67 @@ mod tests {
 
         assert!((output[0] - 1.0).abs() < 0.0001);
         assert!((output[3] - 0.5).abs() < 0.0001);
+    }
+
+    #[test]
+    fn acquires_each_pipewire_port_once_per_cycle() {
+        let ports = [
+            CallbackPort {
+                raw: NonNull::dangling(),
+                direction: PortDirection::Input,
+                channel: "FL".to_owned(),
+                gain: GainStage::default(),
+            },
+            CallbackPort {
+                raw: NonNull::dangling(),
+                direction: PortDirection::Output,
+                channel: "FL".to_owned(),
+                gain: GainStage::default(),
+            },
+        ];
+        let mut acquisitions = 0;
+
+        let buffers = CycleBuffers::acquire_with(&ports, |_| {
+            acquisitions += 1;
+            NonNull::<f32>::dangling().as_ptr()
+        })
+        .unwrap();
+
+        assert_eq!(acquisitions, ports.len());
+        assert_eq!(buffers.len, ports.len());
+    }
+
+    #[test]
+    fn keeps_available_buffers_when_one_port_has_no_buffer() {
+        let ports = [
+            CallbackPort {
+                raw: NonNull::dangling(),
+                direction: PortDirection::Input,
+                channel: "FL".to_owned(),
+                gain: GainStage::default(),
+            },
+            CallbackPort {
+                raw: NonNull::dangling(),
+                direction: PortDirection::Output,
+                channel: "FL".to_owned(),
+                gain: GainStage::default(),
+            },
+        ];
+        let mut acquisitions = 0;
+
+        let buffers = CycleBuffers::acquire_with(&ports, |_| {
+            acquisitions += 1;
+            if acquisitions == 1 {
+                NonNull::<f32>::dangling().as_ptr()
+            } else {
+                std::ptr::null_mut()
+            }
+        })
+        .unwrap();
+
+        assert_eq!(acquisitions, ports.len());
+        assert!(buffers.get(0).is_some());
+        assert!(buffers.get(1).is_none());
     }
 
     #[test]

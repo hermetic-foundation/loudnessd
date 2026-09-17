@@ -156,7 +156,7 @@ harness with ShellCheck, and the NixOS module, including its generated
 immutable TOML and graphical-session user unit. CI does not execute live
 PipeWire tests or the soak harness against runner hardware.
 
-`tests/live/playback-soak.sh` starts a private PipeWire daemon and a policy-only
+`tests/live/audio-soak.sh` starts a private PipeWire daemon and a policy-only
 WirePlumber instance in a temporary runtime directory, then drives two varied
 48 kHz stereo streams into its disposable null sink. Hardware monitors are not
 loaded. Private clients disable realtime scheduling so an unpaced synthetic

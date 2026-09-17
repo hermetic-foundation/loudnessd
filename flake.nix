@@ -101,7 +101,7 @@
             pkgs.runCommand "loudnessd-shellcheck"
               {
                 nativeBuildInputs = [ pkgs.shellcheck ];
-                harness = ./tests/live/playback-soak.sh;
+                harness = ./tests/live/audio-soak.sh;
               }
               ''
                 shellcheck "$harness"

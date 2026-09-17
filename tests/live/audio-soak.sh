@@ -4,7 +4,7 @@
 set -euo pipefail
 
 if (( $# != 6 )); then
-  echo "usage: playback-soak.sh LOUDNESSD SOX PIPEWIRE WIREPLUMBER DURATION_SECONDS OUTPUT" >&2
+  echo "usage: audio-soak.sh LOUDNESSD SOX PIPEWIRE WIREPLUMBER DURATION_SECONDS OUTPUT" >&2
   exit 2
 fi
 

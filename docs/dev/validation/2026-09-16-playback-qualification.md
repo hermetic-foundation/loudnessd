@@ -83,6 +83,13 @@ ownership, and returned to healthy normalization without a daemon restart.
 | Resident-memory growth | 4 KiB |
 | Average process CPU | 3.53% of one core |
 
+That run observed zero absolute errors. The current harness records a
+three-frame counter baseline after endpoint recovery and compares it with a
+second three-frame snapshot after monitoring. This separates errors caused by
+the deliberate endpoint destruction from steady-state regressions while still
+requiring zero counter growth during the soak. Both snapshots are release
+artifacts.
+
 The short run ended while both deliberately quiet fixtures were still slewing
 toward the `-13 LUFS` target, so it supplies recovery and resource evidence but
 no convergence-ratio evidence. It does not replace the eight-hour release soak.
@@ -99,6 +106,8 @@ package artifact.
 - Record application stream volume, mute, channel volume, and WirePlumber
   target before and after the soak.
 - Exercise limiter-bound material and verify the configured peak ceiling.
+- Exercise a real browser-style node pause and resume. Feeding zero-valued
+  samples is not equivalent because the PipeWire node remains processing.
 - Complete the lifecycle and recovery matrix from the release gates.
 
 ## Failed extended soak

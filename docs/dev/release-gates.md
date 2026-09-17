@@ -30,9 +30,16 @@ lifecycle behavior depend on a live PipeWire graph.
   streams. A final short integration run separately validates the real graph.
 - Before each synthetic soak, replacing the private sink while fixture streams
   remain alive must return every intended stream to a healthy managed route
-  without a daemon restart, skipped stream, or PipeWire error.
-- Every intended generator finishes with zero PipeWire errors, and the harness
-  retains its final error-counter snapshot with the release evidence.
+  without a daemon restart or skipped stream. Error counters immediately after
+  this deliberate fault are retained and must remain within the documented
+  recovery bound for the candidate.
+- The harness retains error-counter snapshots after recovery and after the
+  steady monitoring interval. Every intended generator and loudnessd filter
+  remains present and accumulates zero additional PipeWire errors between
+  those snapshots.
+- A browser-style playback node is paused and resumed without recreating the
+  application process. Audio resumes through a healthy normalized route, or
+  loudnessd restores the direct route without user intervention.
 - For non-silent windows that are not gain-clamped or limiter-bound, at least
   95% of post-filter short-term readings settle within `1.5 LU` of the target
   after the configured slew time.

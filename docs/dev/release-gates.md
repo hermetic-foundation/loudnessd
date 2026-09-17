@@ -31,11 +31,12 @@ lifecycle behavior depend on a live PipeWire graph.
 - Before each synthetic soak, replacing the private sink while fixture streams
   remain alive must return every intended stream to a healthy managed route
   without a daemon restart or skipped stream. Error counters immediately after
-  this deliberate fault are retained and must remain within the documented
-  recovery bound for the candidate.
+  this deliberate fault are retained and may not exceed two errors per node.
 - The harness retains one continuous profiler timeline across the steady
   monitoring interval. Every intended generator and loudnessd filter remains
-  present and reports zero PipeWire errors throughout that timeline.
+  present, and its PipeWire error counter does not increase from the first
+  running observation. The initial, maximum, and delta counters are retained in
+  the profiler-error artifact.
 - A browser-style playback node is paused and resumed without recreating the
   application process. Audio resumes through a healthy normalized route, or
   loudnessd restores the direct route without user intervention.

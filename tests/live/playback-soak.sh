@@ -19,11 +19,13 @@ daemon_pid=
 first_stream_pid=
 second_stream_pid=
 sink_id=
+sink_serial=
 pipewire_pid=
 wireplumber_pid=
 host_runtime=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR must be set}
 test_runtime=$(mktemp -d "$host_runtime/loudnessd-soak.XXXXXX")
 test_config=$test_runtime/config.toml
+client_config_dir=$test_runtime/config-home/pipewire/client.conf.d
 server_log=$output.pipewire-server.log
 wireplumber_log=$output.wireplumber.log
 top_output=$output.pipewire-top.txt
@@ -64,16 +66,23 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+mkdir -p "$client_config_dir"
+printf '%s\n' \
+  'context.properties = {' \
+  '  module.rt = false' \
+  '  loop.rt-prio = 0' \
+  '}' >"$client_config_dir/10-no-realtime.conf"
+
 printf '%s\n' \
   '[defaults]' \
   'playback = false' \
   'capture = false' \
   '' \
-  '[applications."Loudnessd-Soak-Continuous"]' \
+  '[applications."loudnessd.soak.continuous"]' \
   'playback = true' \
   'capture = false' \
   '' \
-  '[applications."Loudnessd-Soak-Intermittent"]' \
+  '[applications."loudnessd.soak.intermittent"]' \
   'playback = true' \
   'capture = false' >"$test_config"
 
@@ -115,19 +124,27 @@ create_sink() {
     node.description = \"loudnessd soak sink\"
     media.class = Audio/Sink
     object.linger = true
+    node.always-process = true
+    node.want-driver = true
+    priority.driver = 0
     audio.position = [ FL FR ]
   }" >/dev/null
 }
 
 wait_for_sink() {
-  local previous_id=${1:-}
+  local previous_serial=${1:-}
+  local sink=
   for _ in {1..50}; do
-    sink_id=$("${private_env[@]}" pw-dump | jq -r --arg name "$sink_name" --arg previous "$previous_id" '
+    sink=$("${private_env[@]}" pw-dump | jq -r --arg name "$sink_name" --arg previous "$previous_serial" '
       first(.[] | select(
-        .info.props["node.name"]? == $name and (.id | tostring) != $previous
-      ) | .id) // empty
+        .info.props["node.name"]? == $name and
+        (.info.props["object.serial"] | tostring) != $previous
+      ) | [.id, .info.props["object.serial"]] | @tsv) // empty
     ')
-    [[ -n $sink_id ]] && return 0
+    if [[ -n $sink ]]; then
+      IFS=$'\t' read -r sink_id sink_serial <<<"$sink"
+      return 0
+    fi
     sleep 0.1
   done
   return 1
@@ -197,11 +214,12 @@ if [[ $ready != true ]]; then
   exit 1
 fi
 
-previous_sink_id=$sink_id
-"${private_env[@]}" pw-cli destroy "$previous_sink_id"
+previous_sink_serial=$sink_serial
+"${private_env[@]}" pw-cli destroy "$sink_id"
 sink_id=
+sink_serial=
 create_sink
-if ! wait_for_sink "$previous_sink_id"; then
+if ! wait_for_sink "$previous_sink_serial"; then
   save_startup_diagnostics
   echo "replacement soak sink did not appear" >&2
   exit 1
@@ -237,7 +255,7 @@ monitor_status=0
   --expect-active 2 \
   --output "$output" || monitor_status=$?
 
-"${private_env[@]}" pw-top -b -n 1 >"$top_output"
+"${private_env[@]}" pw-top -b -n 3 >"$top_output"
 for node_id in "${fixture_ids[@]}"; do
   if ! awk -v node_id="$node_id" '
     $2 == node_id { found = 1; failed = ($9 != 0) }
@@ -247,4 +265,24 @@ for node_id in "${fixture_ids[@]}"; do
     exit 1
   fi
 done
+if ! awk '
+  $2 ~ /^[0-9]+$/ && $NF == "loudnessd" {
+    seen[$2] = 1
+    errors[$2] = $9
+  }
+  END {
+    for (node_id in seen) {
+      count++
+      failed = failed || errors[node_id] != 0
+    }
+    exit count != 2 || failed
+  }
+' "$top_output"; then
+  echo "isolated loudnessd filters are missing or accumulated PipeWire errors" >&2
+  exit 1
+fi
+if grep -q '^\[E\]' "$server_log" "$wireplumber_log"; then
+  echo "isolated PipeWire services logged an error" >&2
+  exit 1
+fi
 exit "$monitor_status"

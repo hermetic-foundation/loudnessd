@@ -157,27 +157,34 @@ immutable TOML and graphical-session user unit. CI does not execute live
 PipeWire tests or the soak harness against runner hardware.
 
 `tests/live/audio-soak.sh` starts a private PipeWire daemon and a policy-only
-WirePlumber instance in a temporary runtime directory, then drives two varied
-48 kHz stereo streams into its disposable null sink. Hardware monitors are not
-loaded. Private clients disable realtime scheduling so an unpaced synthetic
-graph cannot trip the kernel realtime watchdog; real-graph integration covers
-production scheduling separately. The candidate daemon, IPC socket, graph,
-fixtures, and recovery journal therefore cannot observe or modify desktop
-applications or hardware. Before monitoring, the harness destroys and replaces
-the sink while both application streams remain alive. Replacement is identified
-by PipeWire object serial rather than its recyclable global ID, and both managed
-routes must return healthy. This reproduces endpoint replacement without
-exposing interactive audio to the recovery path. Monitoring then requires
-exactly two active streams. The harness retains NDJSON status, private server
-and session-manager logs, and one continuous `pw-top` timeline spanning the
-monitoring interval. That timeline must contain both fixture nodes and both
-loudnessd filter nodes, and every observed error counter must remain zero.
-Profiling starts after deliberate endpoint replacement and pause/resume fault
-injection, so the steady-state result cannot hide a transient by sampling only
-the final graph. Recovery behavior is recorded separately. Private service logs
-must contain no error entries, and no audio is retained. Its exit trap removes
-the complete private runtime and never starts, stops, or reloads the user's
-ordinary PipeWire or loudnessd services.
+WirePlumber instance in a temporary runtime directory. Playback mode drives two
+varied 48 kHz stereo playback streams into a disposable null sink; capture mode
+uses one application identity with simultaneous playback and capture streams.
+Hardware monitors are not loaded. Private clients disable realtime scheduling
+so an unpaced synthetic graph cannot trip the kernel realtime watchdog;
+real-graph integration covers production scheduling separately. The candidate
+daemon, IPC socket, graph, fixtures, and recovery journal therefore cannot
+observe or modify desktop applications or hardware.
+
+Before monitoring, the harness assigns distinct non-default fixture volumes,
+snapshots each stream's complete PipeWire `Props` control state, and destroys
+and replaces the sink while both application streams remain alive. Replacement
+is identified by PipeWire object serial rather than its recyclable global ID,
+and both managed routes must return healthy. The harness also snapshots the
+post-recovery target. After pause/resume and monitoring, the complete volume,
+mute, channel-volume, soft-volume, monitor-control, and target state must match
+exactly. A mismatch retains before-and-after diagnostics and fails the run.
+
+Monitoring requires exactly two active streams. The harness retains NDJSON
+status, private server and session-manager logs, and one continuous `pw-top`
+timeline spanning the monitoring interval. That timeline must contain both
+fixture nodes and both loudnessd filter nodes, and every observed error counter
+must remain zero. Profiling starts after deliberate endpoint replacement and
+pause/resume fault injection, so the steady-state result cannot hide a transient
+by sampling only the final graph. Recovery behavior is recorded separately.
+Private service logs must contain no error entries, and no audio is retained.
+Its exit trap removes the complete private runtime and never starts, stops, or
+reloads the user's ordinary PipeWire or loudnessd services.
 
 Native desktop validation on NixOS additionally covered:
 

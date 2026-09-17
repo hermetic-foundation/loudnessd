@@ -147,13 +147,25 @@ but `pw-top` resets displayed counters for each profiler process. The continuous
 timeline is the authoritative evidence and showed no xrun. This bounded run
 still does not replace the required eight-hour soak.
 
+## Application-control invariant qualification
+
+Candidate `f8d62f5029cab04a9458da8fe2adf99d2f00698a` passed separate
+15-second playback and duplex-capture runs with distinct non-default fixture
+volumes. Both runs preserved the complete application `Props` state and the
+post-recovery target exactly across sink replacement, pause/resume, and active
+normalization. The compared state includes scalar volume, mute, per-channel
+volume, soft volume, and monitor controls. Both runs also reported zero
+PipeWire errors, route failures, callback stalls, IPC failures, and memory
+growth. This proves the assertion and bounded behavior; the same assertion must
+remain enabled for the required eight-hour run.
+
 ## Remaining release evidence
 
 - Complete the eight-hour varied-content soak and measure memory growth from
   hour one through hour eight.
 - Run the eight-stream memory case.
-- Record application stream volume, mute, channel volume, and WirePlumber
-  target before and after the soak.
+- Retain the now-automated application control and target invariant throughout
+  the full eight-hour soak.
 - Exercise limiter-bound material and verify the configured peak ceiling.
 - Exercise a real browser pause and resume. The synthetic node-command case now
   passes, but feeding zero-valued samples is not equivalent and browser graph

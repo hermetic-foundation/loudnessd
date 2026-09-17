@@ -88,6 +88,11 @@ fn stream_status(
     let gain_db = update
         .map(|update| update.decision.target_gain_db())
         .unwrap_or(0.0);
+    let gain_clamped = gain_is_limited(
+        controller_config,
+        gain_db,
+        meter.map(|meter| meter.source_loudness_lufs),
+    );
 
     StreamStatus {
         node_id,
@@ -100,7 +105,14 @@ fn stream_status(
         lifecycle,
         route,
         control: update
-            .map(|update| control_status(update.decision))
+            .map(|update| {
+                control_status(
+                    update.decision,
+                    update.meter.output_loudness_lufs,
+                    controller_config,
+                    gain_clamped,
+                )
+            })
             .unwrap_or(ControlStatus::Waiting),
         target_lufs: controller_config.target_lufs,
         source_lufs: meter.map(|meter| meter.source_loudness_lufs),
@@ -108,11 +120,7 @@ fn stream_status(
         output_lufs: meter.and_then(|meter| meter.output_loudness_lufs),
         output_peak_dbtp: meter.and_then(|meter| meter.output_true_peak_dbtp),
         gain_db,
-        gain_clamped: gain_is_limited(
-            controller_config,
-            gain_db,
-            meter.map(|meter| meter.source_loudness_lufs),
-        ),
+        gain_clamped,
         limiter_db: meter.map(|meter| meter.limiter_reduction_db).unwrap_or(0.0),
         limiter_max_db: meter
             .map(|meter| meter.maximum_limiter_reduction_db)
@@ -142,10 +150,23 @@ fn gain_is_limited(config: ControllerConfig, gain_db: f32, source_lufs: Option<f
         })
 }
 
-fn control_status(decision: Decision) -> ControlStatus {
+fn control_status(
+    decision: Decision,
+    output_lufs: Option<f32>,
+    config: ControllerConfig,
+    gain_clamped: bool,
+) -> ControlStatus {
     match decision {
         Decision::Bypass => ControlStatus::Bypass,
         Decision::Silence { .. } => ControlStatus::Silence,
+        Decision::Hold { .. }
+            if !gain_clamped
+                && output_lufs.is_some_and(|output| {
+                    (output - config.target_lufs).abs() > config.deadband_lu
+                }) =>
+        {
+            ControlStatus::Converging
+        }
         Decision::Hold { .. } => ControlStatus::Settled,
         Decision::Adjust { .. } => ControlStatus::Converging,
     }
@@ -183,5 +204,24 @@ mod tests {
         ));
         assert!(!gain_is_limited(config, 3.0, Some(-16.0)));
         assert!(!gain_is_limited(config, 0.0, None));
+    }
+
+    #[test]
+    fn reports_post_filter_meter_settling_after_gain_stops() {
+        let config = ControllerConfig::default();
+        let hold = Decision::Hold { gain_db: 4.0 };
+
+        assert_eq!(
+            control_status(hold, Some(-12.0), config, false),
+            ControlStatus::Converging
+        );
+        assert_eq!(
+            control_status(hold, Some(-15.5), config, false),
+            ControlStatus::Settled
+        );
+        assert_eq!(
+            control_status(hold, Some(-12.0), config, true),
+            ControlStatus::Settled
+        );
     }
 }

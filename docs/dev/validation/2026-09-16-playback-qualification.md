@@ -228,6 +228,9 @@ application stream remained alive. The harness verified all of the following:
 - restarting the private WirePlumber policy manager caused one delayed policy
   relink; loudnessd detected it, recovered to a stable healthy route, and kept
   the application stream alive; and
+- a second normalized application exited while active; its controller, stream,
+  and filter disappeared without leaving a skipped entry or disturbing the
+  original healthy stream; and
 - clean `SIGTERM` shutdown exited successfully with both direct links intact
   and no filter node or recovery journal remaining.
 
@@ -246,8 +249,9 @@ of one core. The complete application control and target invariants also held.
   passes, but feeding zero-valued samples is not equivalent and browser graph
   policy still needs direct integration evidence.
 - Complete the remaining lifecycle matrix: PipeWire restart, source-device
-  change and reconnection, application exit during route transitions, and
-  system suspend/resume.
+  change and reconnection, application exit specifically during route
+  installation or bypass (active-route exit cleanup now passes), and system
+  suspend/resume.
 
 ## Failed extended soak
 

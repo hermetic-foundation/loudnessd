@@ -83,12 +83,11 @@ ownership, and returned to healthy normalization without a daemon restart.
 | Resident-memory growth | 4 KiB |
 | Average process CPU | 3.53% of one core |
 
-That run observed zero absolute errors. The current harness records a
-three-frame counter baseline after endpoint recovery and compares it with a
-second three-frame snapshot after monitoring. This separates errors caused by
-the deliberate endpoint destruction from steady-state regressions while still
-requiring zero counter growth during the soak. Both snapshots are release
-artifacts.
+That run observed zero absolute errors. The current harness starts one
+continuous `pw-top` profiler after endpoint recovery and pause/resume fault
+injection, then retains its complete steady-state timeline. This avoids the
+per-process baseline reset that made independently launched snapshots
+unsuitable for cumulative comparison.
 
 The short run ended while both deliberately quiet fixtures were still slewing
 toward the `-13 LUFS` target, so it supplies recovery and resource evidence but
@@ -122,6 +121,31 @@ and node identity were preserved.
 This proves the normalized processing path resumes after an explicit PipeWire
 node pause. A real browser pause/resume integration run remains required because
 browser session managers may apply additional node properties or graph policy.
+
+## Continuous profiler qualification
+
+Candidate `193320c8f12b` passed a 120-second private-graph run with the profiler
+active for the full monitoring interval. The run included sink replacement and
+same-node pause/resume before steady monitoring.
+
+| Measurement | Result |
+| --- | ---: |
+| Monitor samples | 120 |
+| Settled convergence ratio | 96.48% |
+| IPC failures | 0 |
+| Daemon restarts | 0 |
+| Active-stream shortfalls | 0 |
+| Skipped-stream observations | 0 |
+| Unhealthy-route observations | 0 |
+| Stalled-callback observations | 0 |
+| Maximum fixture/filter PipeWire errors | 0 |
+| Resident-memory growth | 0 bytes |
+| Average process CPU | 4.16% of one core |
+
+An earlier pair of independent final snapshots appeared to show filter errors,
+but `pw-top` resets displayed counters for each profiler process. The continuous
+timeline is the authoritative evidence and showed no xrun. This bounded run
+still does not replace the required eight-hour soak.
 
 ## Remaining release evidence
 

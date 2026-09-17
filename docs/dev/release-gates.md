@@ -33,10 +33,9 @@ lifecycle behavior depend on a live PipeWire graph.
   without a daemon restart or skipped stream. Error counters immediately after
   this deliberate fault are retained and must remain within the documented
   recovery bound for the candidate.
-- The harness retains error-counter snapshots after recovery and after the
-  steady monitoring interval. Every intended generator and loudnessd filter
-  remains present and accumulates zero additional PipeWire errors between
-  those snapshots.
+- The harness retains one continuous profiler timeline across the steady
+  monitoring interval. Every intended generator and loudnessd filter remains
+  present and reports zero PipeWire errors throughout that timeline.
 - A browser-style playback node is paused and resumed without recreating the
   application process. Audio resumes through a healthy normalized route, or
   loudnessd restores the direct route without user intervention.

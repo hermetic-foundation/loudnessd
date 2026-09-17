@@ -169,16 +169,15 @@ by PipeWire object serial rather than its recyclable global ID, and both managed
 routes must return healthy. This reproduces endpoint replacement without
 exposing interactive audio to the recovery path. Monitoring then requires
 exactly two active streams. The harness retains NDJSON status, private server
-and session-manager logs, and three-frame `pw-top` snapshots immediately after
-recovery and after monitoring. Both snapshots must contain the same fixture and
-loudnessd filter nodes, and no node may accumulate additional PipeWire errors
-during the steady monitoring interval. Recovery-time counters are retained
-separately because deliberately destroying an active endpoint can increment
-them; release evidence must report and bound those counters rather than hiding
-them in the steady-state result. Private service logs must contain no error
-entries, and no audio is retained. Its exit trap removes the complete private
-runtime and never starts, stops, or reloads the user's ordinary PipeWire or
-loudnessd services.
+and session-manager logs, and one continuous `pw-top` timeline spanning the
+monitoring interval. That timeline must contain both fixture nodes and both
+loudnessd filter nodes, and every observed error counter must remain zero.
+Profiling starts after deliberate endpoint replacement and pause/resume fault
+injection, so the steady-state result cannot hide a transient by sampling only
+the final graph. Recovery behavior is recorded separately. Private service logs
+must contain no error entries, and no audio is retained. Its exit trap removes
+the complete private runtime and never starts, stops, or reloads the user's
+ordinary PipeWire or loudnessd services.
 
 Native desktop validation on NixOS additionally covered:
 

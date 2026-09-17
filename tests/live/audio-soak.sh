@@ -83,7 +83,6 @@ declare -A baseline_targets=()
 host_runtime=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR must be set}
 test_runtime=$(mktemp -d "$host_runtime/loudnessd-soak.XXXXXX")
 test_config=$test_runtime/config.toml
-client_config_dir=$test_runtime/config-home/pipewire/client.conf.d
 server_config_dir=$test_runtime/config-home/pipewire/pipewire.conf.d
 server_log=$output.pipewire-server.log
 wireplumber_log=$output.wireplumber.log
@@ -129,12 +128,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$client_config_dir" "$server_config_dir"
-printf '%s\n' \
-  'context.properties = {' \
-  '  module.rt = false' \
-  '  loop.rt-prio = 0' \
-  '}' >"$client_config_dir/10-no-realtime.conf"
+mkdir -p "$server_config_dir"
 printf '%s\n' \
   'context.properties = {' \
   "  default.clock.rate = $sample_rate" \

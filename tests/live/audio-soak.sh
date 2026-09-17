@@ -4,7 +4,7 @@
 set -euo pipefail
 
 if (( $# < 6 || $# > 7 )); then
-  echo "usage: audio-soak.sh LOUDNESSD SOX PIPEWIRE WIREPLUMBER DURATION_SECONDS OUTPUT [playback|capture|limiter|memory]" >&2
+  echo "usage: audio-soak.sh LOUDNESSD SOX PIPEWIRE WIREPLUMBER DURATION_SECONDS OUTPUT [playback|capture|lifecycle|limiter|memory]" >&2
   exit 2
 fi
 
@@ -25,6 +25,11 @@ case $mode in
     expected_active=2
     pause_application=loudnessd.soak.duplex
     pause_domain=capture
+    ;;
+  lifecycle)
+    expected_active=1
+    pause_application=loudnessd.soak.lifecycle
+    pause_domain=playback
     ;;
   limiter)
     expected_active=1
@@ -58,6 +63,7 @@ test_config=$test_runtime/config.toml
 client_config_dir=$test_runtime/config-home/pipewire/client.conf.d
 server_log=$output.pipewire-server.log
 wireplumber_log=$output.wireplumber.log
+daemon_log=$output.daemon.log
 top_output=$output.pipewire-top.txt
 summary_output=$output.summary.json
 private_env=(env
@@ -128,6 +134,15 @@ elif [[ $mode == capture ]]; then
     '[applications."loudnessd.soak.duplex"]' \
     'playback = true' \
     'capture = true' >"$test_config"
+elif [[ $mode == lifecycle ]]; then
+  printf '%s\n' \
+    '[defaults]' \
+    'playback = false' \
+    'capture = false' \
+    '' \
+    '[applications."loudnessd.soak.lifecycle"]' \
+    'playback = true' \
+    'capture = false' >"$test_config"
 elif [[ $mode == limiter ]]; then
   printf '%s\n' \
     '[defaults]' \
@@ -176,8 +191,13 @@ for _ in {1..50}; do
   sleep 0.1
 done
 
-"${private_env[@]}" "$loudnessd" --daemon --config "$test_config" &
-daemon_pid=$!
+start_daemon() {
+  "${private_env[@]}" "$loudnessd" --daemon --config "$test_config" >>"$daemon_log" 2>&1 &
+  daemon_pid=$!
+}
+
+: >"$daemon_log"
+start_daemon
 
 create_sink() {
   "${private_env[@]}" pw-cli create-node adapter "{
@@ -274,6 +294,78 @@ stream_target_state() {
       target_object: .["target.object"] // null
     }
   '
+}
+
+direct_route_channel_count() {
+  local stream_node_id=$1
+  "${private_env[@]}" pw-dump | jq -r \
+    --arg stream_node_id "$stream_node_id" \
+    --arg sink_node_id "$sink_id" '
+      [
+        .[] | select(
+          .type == "PipeWire:Interface:Link" and
+          (.info.props["link.output.node"] | tostring) == $stream_node_id and
+          (.info.props["link.input.node"] | tostring) == $sink_node_id
+        )
+      ] | length
+    '
+}
+
+wait_for_lifecycle_state() {
+  local enabled=$1
+  local active=$2
+  local managed=$3
+  for _ in {1..100}; do
+    status=$("${private_env[@]}" "$loudnessd" msg status-json 2>/dev/null || true)
+    if jq -e \
+      --argjson enabled "$enabled" \
+      --argjson active "$active" \
+      --argjson managed "$managed" '
+        .enabled == $enabled and .active == $active and .managed == $managed
+      ' >/dev/null 2>&1 <<<"$status"; then
+      return 0
+    fi
+    if [[ -n $daemon_pid ]] && ! kill -0 "$daemon_pid" 2>/dev/null; then
+      return 1
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_for_healthy_routes() {
+  for _ in {1..100}; do
+    status=$("${private_env[@]}" "$loudnessd" msg status-json 2>/dev/null || true)
+    if jq -e --argjson expected "$expected_active" '
+      .enabled and .active == $expected and .managed == $expected and .skipped == 0 and
+      all(.streams[]; .route == "healthy")
+    ' >/dev/null 2>&1 <<<"$status"; then
+      mapfile -t fixture_ids < <(jq -r '.streams[].node_id' <<<"$status")
+      return 0
+    fi
+    if [[ -n $daemon_pid ]] && ! kill -0 "$daemon_pid" 2>/dev/null; then
+      return 1
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_for_filter_removal() {
+  for _ in {1..50}; do
+    if ! "${private_env[@]}" pw-dump | jq -e '
+      any(.[]; select(
+        .type == "PipeWire:Interface:Node" and
+        .info.props["media.category"]? == "Filter" and
+        .info.props["media.role"]? == "DSP" and
+        (.info.props["node.name"]? // "" | startswith("loudnessd-"))
+      ))
+    ' >/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
 }
 
 save_state_mismatch() {
@@ -373,6 +465,14 @@ elif [[ $mode == capture ]]; then
     exit 1
   fi
   link_capture_monitor
+elif [[ $mode == lifecycle ]]; then
+  lifecycle_fixture=$test_runtime/lifecycle-stream.raw
+  generate_first_stream "$lifecycle_fixture"
+
+  cat "$lifecycle_fixture" | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+    --rate 48000 --channels 2 --channel-map Stereo --format f32 \
+    --properties='application.id=loudnessd.soak.lifecycle application.name=Loudnessd-Soak-Lifecycle' - &
+  stream_pids+=("$!")
 elif [[ $mode == limiter ]]; then
   limiter_fixture=$test_runtime/limiter-stream.raw
   generate_limiter_stream "$limiter_fixture"
@@ -431,6 +531,69 @@ sleep 1
 for node_id in "${fixture_ids[@]}"; do
   baseline_controls[$node_id]=$(stream_control_state "$node_id")
 done
+
+if [[ $mode == lifecycle ]]; then
+  lifecycle_node_id=${fixture_ids[0]}
+  recovery_journal=$test_runtime/loudnessd-routes.toml
+  if [[ ! -f $recovery_journal ]]; then
+    save_startup_diagnostics
+    echo "active lifecycle route has no recovery journal" >&2
+    exit 1
+  fi
+
+  kill -KILL "$daemon_pid"
+  wait "$daemon_pid" 2>/dev/null || true
+  daemon_pid=
+  start_daemon
+  if ! wait_for_healthy_routes; then
+    save_startup_diagnostics
+    echo "lifecycle stream did not recover after forced daemon termination" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'restored 2 direct links after an unclean exit' "$daemon_log"; then
+    echo "daemon restart did not report stereo journal recovery" >&2
+    exit 1
+  fi
+
+  response=$("${private_env[@]}" "$loudnessd" msg disable)
+  if [[ $response != ok ]] || ! wait_for_lifecycle_state false 0 0; then
+    save_startup_diagnostics
+    echo "runtime disable did not bypass the lifecycle stream" >&2
+    exit 1
+  fi
+  if [[ $(direct_route_channel_count "$lifecycle_node_id") != 2 ]]; then
+    save_startup_diagnostics
+    echo "runtime disable did not restore both direct channels" >&2
+    exit 1
+  fi
+  if [[ -e $recovery_journal ]]; then
+    echo "runtime disable left a recovery journal" >&2
+    exit 1
+  fi
+
+  response=$("${private_env[@]}" "$loudnessd" msg enable)
+  if [[ $response != ok ]] || ! wait_for_healthy_routes; then
+    save_startup_diagnostics
+    echo "runtime enable did not restore normalization" >&2
+    exit 1
+  fi
+
+  valid_config=$(<"$test_config")
+  printf '%s\n' '[defaults' >"$test_config"
+  response=$("${private_env[@]}" "$loudnessd" msg reload)
+  if [[ $response != error:* ]] || ! wait_for_healthy_routes; then
+    save_startup_diagnostics
+    echo "invalid reload did not preserve active normalization" >&2
+    exit 1
+  fi
+  printf '%s\n' "$valid_config" >"$test_config"
+  response=$("${private_env[@]}" "$loudnessd" msg reload)
+  if [[ $response != ok ]] || ! wait_for_healthy_routes; then
+    save_startup_diagnostics
+    echo "valid reload did not restore normalization" >&2
+    exit 1
+  fi
+fi
 
 previous_sink_serial=$sink_serial
 "${private_env[@]}" pw-cli destroy "$sink_id"
@@ -619,5 +782,27 @@ done
 if grep -q '^\[E\]' "$server_log" "$wireplumber_log"; then
   echo "isolated PipeWire services logged an error" >&2
   exit 1
+fi
+
+if [[ $mode == lifecycle ]]; then
+  kill -TERM "$daemon_pid"
+  if ! wait "$daemon_pid"; then
+    daemon_pid=
+    echo "daemon did not stop cleanly after lifecycle qualification" >&2
+    exit 1
+  fi
+  daemon_pid=
+  if [[ $(direct_route_channel_count "$lifecycle_node_id") != 2 ]]; then
+    echo "clean daemon stop did not preserve both direct channels" >&2
+    exit 1
+  fi
+  if [[ -e $recovery_journal ]]; then
+    echo "clean daemon stop left a recovery journal" >&2
+    exit 1
+  fi
+  if ! wait_for_filter_removal; then
+    echo "clean daemon stop left a loudnessd filter node" >&2
+    exit 1
+  fi
 fi
 exit "$monitor_status"

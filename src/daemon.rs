@@ -246,6 +246,14 @@ impl Daemon {
                     eprintln!("loudnessd: stream {node_id} {reason}; reconnecting");
                 }
                 self.sync_recovery_journal(None);
+                self.managed.insert(
+                    node_id,
+                    ManagedStream::Connecting {
+                        stream,
+                        filter,
+                        control,
+                    },
+                );
                 continue;
             }
 
@@ -410,7 +418,11 @@ impl Daemon {
             };
             let plan = match plan_route(stream.domain, node_id, filter_node_id, &ports, &links) {
                 Ok(plan) => plan,
-                Err(RoutePlanError::MissingFilterPort { .. }) => {
+                Err(
+                    RoutePlanError::MissingFilterPort { .. }
+                    | RoutePlanError::MissingRoute { .. }
+                    | RoutePlanError::AmbiguousRoute { .. },
+                ) => {
                     self.managed.insert(
                         node_id,
                         ManagedStream::Connecting {

@@ -33,8 +33,7 @@ case $mode in
 esac
 sink_name="loudnessd-soak-sink"
 daemon_pid=
-first_stream_pid=
-second_stream_pid=
+stream_pids=()
 sink_id=
 sink_serial=
 capture_node_id=
@@ -61,11 +60,9 @@ private_env=(env
 # shellcheck disable=SC2329 # Invoked indirectly by the traps below.
 cleanup() {
   trap - EXIT INT TERM
-  for pid in "$first_stream_pid" "$second_stream_pid"; do
-    if [[ -n $pid ]]; then
-      kill "$pid" 2>/dev/null || true
-      wait "$pid" 2>/dev/null || true
-    fi
+  for pid in "${stream_pids[@]}"; do
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
   done
   if [[ -n $sink_id ]]; then
     "${private_env[@]}" pw-cli destroy "$sink_id" 2>/dev/null || true
@@ -290,12 +287,12 @@ if [[ $mode == playback ]]; then
   cat "$first_fixture" | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
     --rate 48000 --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.continuous application.name=Loudnessd-Soak-Continuous' - &
-  first_stream_pid=$!
+  stream_pids+=("$!")
 
   cat "$second_fixture" | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
     --rate 48000 --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.intermittent application.name=Loudnessd-Soak-Intermittent' - &
-  second_stream_pid=$!
+  stream_pids+=("$!")
 else
   second_fixture=$test_runtime/second-stream.raw
   generate_second_stream "$second_fixture"
@@ -303,13 +300,13 @@ else
   cat "$second_fixture" | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
     --rate 48000 --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.duplex application.name=Loudnessd-Soak-Duplex' - &
-  first_stream_pid=$!
+  stream_pids+=("$!")
 
   "${private_env[@]}" pw-cat --record --raw --target 0 \
     --rate 48000 --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.duplex application.name=Loudnessd-Soak-Duplex' \
     /dev/null &
-  second_stream_pid=$!
+  stream_pids+=("$!")
   if ! wait_for_capture_node; then
     save_startup_diagnostics
     echo "isolated capture recorder did not appear" >&2

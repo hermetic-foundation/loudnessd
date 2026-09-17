@@ -181,7 +181,7 @@ impl ApplicationPolicyOverride {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UserConfig {
     pub playback: ControllerConfigOverride,

@@ -4,7 +4,7 @@
 set -euo pipefail
 
 if (( $# < 6 || $# > 7 )); then
-  echo "usage: audio-soak.sh LOUDNESSD SOX PIPEWIRE WIREPLUMBER DURATION_SECONDS OUTPUT [playback|capture|memory]" >&2
+  echo "usage: audio-soak.sh LOUDNESSD SOX PIPEWIRE WIREPLUMBER DURATION_SECONDS OUTPUT [playback|capture|limiter|memory]" >&2
   exit 2
 fi
 
@@ -25,6 +25,11 @@ case $mode in
     expected_active=2
     pause_application=loudnessd.soak.duplex
     pause_domain=capture
+    ;;
+  limiter)
+    expected_active=1
+    pause_application=loudnessd.soak.limiter
+    pause_domain=playback
     ;;
   memory)
     expected_active=8
@@ -54,6 +59,7 @@ client_config_dir=$test_runtime/config-home/pipewire/client.conf.d
 server_log=$output.pipewire-server.log
 wireplumber_log=$output.wireplumber.log
 top_output=$output.pipewire-top.txt
+summary_output=$output.summary.json
 private_env=(env
   PIPEWIRE_RUNTIME_DIR="$test_runtime"
   XDG_RUNTIME_DIR="$test_runtime"
@@ -122,6 +128,15 @@ elif [[ $mode == capture ]]; then
     '[applications."loudnessd.soak.duplex"]' \
     'playback = true' \
     'capture = true' >"$test_config"
+elif [[ $mode == limiter ]]; then
+  printf '%s\n' \
+    '[defaults]' \
+    'playback = false' \
+    'capture = false' \
+    '' \
+    '[applications."loudnessd.soak.limiter"]' \
+    'playback = true' \
+    'capture = false' >"$test_config"
 else
   printf '%s\n' \
     '[defaults]' \
@@ -308,6 +323,21 @@ generate_second_stream() {
   done
 }
 
+generate_limiter_stream() {
+  local output_file=$1
+  local generated=0
+  : >"$output_file"
+  while (( generated < duration + 60 )); do
+    {
+      "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+        synth 0.998 sine 220 sine 330 vol 0.02
+      "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+        synth 0.002 sine 997 sine 997 vol 0.95
+    } >>"$output_file"
+    generated=$((generated + 1))
+  done
+}
+
 if [[ $mode == playback ]]; then
   first_fixture=$test_runtime/first-stream.raw
   second_fixture=$test_runtime/second-stream.raw
@@ -343,6 +373,14 @@ elif [[ $mode == capture ]]; then
     exit 1
   fi
   link_capture_monitor
+elif [[ $mode == limiter ]]; then
+  limiter_fixture=$test_runtime/limiter-stream.raw
+  generate_limiter_stream "$limiter_fixture"
+
+  cat "$limiter_fixture" | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+    --rate 48000 --channels 2 --channel-map Stereo --format f32 \
+    --properties='application.id=loudnessd.soak.limiter application.name=Loudnessd-Soak-Limiter' - &
+  stream_pids+=("$!")
 else
   second_fixture=$test_runtime/second-stream.raw
   generate_second_stream "$second_fixture"
@@ -381,7 +419,11 @@ fi
 
 for index in "${!fixture_ids[@]}"; do
   node_id=${fixture_ids[$index]}
-  fixture_volume=$(printf '0.%02d' "$((67 + index * 4))")
+  if [[ $mode == limiter ]]; then
+    fixture_volume=1.0
+  else
+    fixture_volume=$(printf '0.%02d' "$((67 + index * 4))")
+  fi
   "${private_env[@]}" wpctl set-volume "$node_id" "$fixture_volume"
   "${private_env[@]}" wpctl set-mute "$node_id" 0
 done
@@ -518,13 +560,23 @@ monitor_status=0
   --duration "$duration" \
   --interval 1000 \
   --expect-active "$expected_active" \
-  --output "$output" || monitor_status=$?
+  --output "$output" >"$summary_output" || monitor_status=$?
+cat "$summary_output"
 
 if ! wait "$top_pid"; then
   echo "continuous PipeWire profiler failed" >&2
   exit 1
 fi
 top_pid=
+
+if [[ $mode == limiter ]] && ! jq -e '
+  .maximum_limiter_reduction_db > 0.1 and
+  .maximum_output_true_peak_dbtp != null and
+  .maximum_output_true_peak_dbtp <= -0.95
+' "$summary_output" >/dev/null; then
+  echo "limiter qualification did not engage or exceeded the -1 dBTP ceiling" >&2
+  exit 1
+fi
 
 for node_id in "${fixture_ids[@]}"; do
   final_controls=$(stream_control_state "$node_id")

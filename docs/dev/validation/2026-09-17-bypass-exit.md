@@ -1,12 +1,12 @@
-# Application exit during bypass: 2026-09-17
+# Application exit during route transitions: 2026-09-17
 
 ## Result
 
-Pass for the bypass boundary. The private lifecycle harness terminated a
-second application while `loudnessd msg disable` was performing ordered bypass
-for it and a surviving stereo stream. The daemon restored the survivor's two
-direct channels, removed every managed filter and the recovery journal, then
-successfully re-enabled normalization for the survivor.
+Pass for both route-transition boundaries. A live transaction test removed a
+disposable source immediately after replacement links were staged during
+installation. The private lifecycle harness separately terminated a second
+application while `loudnessd msg disable` was performing ordered bypass for it
+and a surviving stereo stream.
 
 ## Environment
 
@@ -15,10 +15,24 @@ successfully re-enabled normalization for the survivor.
 - Candidate package:
   `/nix/store/1rrb6gx7nyyg3wjvqdwniw4l584abxai-loudnessd-0.1.0`
 - Harness commit: `74233094d656`
+- Install-boundary test commit: `d6347f1efbdc`
 - Graph: disposable private 48 kHz stereo PipeWire server and WirePlumber
 - CPU limit: two cores through a systemd user-service quota
 
-## Assertions
+## Installation boundary
+
+The live Rust test created disposable source, normalizer, and destination
+nodes, confirmed the original direct link, and then installed through a backend
+hook. The hook dropped the source owner immediately after both replacement
+links were confirmed but before cutover. A rejected transaction was permitted
+to fail only while removing the original or activating the filter; if the
+server accepted the now-stale transaction, the test explicitly released it.
+
+In either outcome, the source disappeared and every staged replacement link
+was absent before the test returned. The test ran against the desktop PipeWire
+server but did not discover or modify existing application routes.
+
+## Bypass boundary
 
 The test required all of the following before continuing:
 
@@ -34,11 +48,3 @@ The subsequent eight-second monitor interval retained that one route in every
 sample with zero IPC failures, daemon restarts, skipped streams, unhealthy
 routes, callback stalls, PipeWire errors, or resident-memory growth. Average
 daemon CPU use was 2.37% of one core.
-
-## Remaining boundary
-
-This run does not qualify application exit during route installation. The
-daemon creates and installs a ready filter within one event-loop tick, so its
-`connecting` state is not observable through IPC. That boundary needs a live
-transaction test with an injected endpoint removal between replacement-link
-staging and cutover; timing a short-lived client is not accepted as proof.

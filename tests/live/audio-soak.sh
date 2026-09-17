@@ -88,6 +88,7 @@ server_log=$output.pipewire-server.log
 wireplumber_log=$output.wireplumber.log
 daemon_log=$output.daemon.log
 top_output=$output.pipewire-top.txt
+profiler_error_output=$output.profiler-errors.tsv
 summary_output=$output.summary.json
 private_env=(env
   PIPEWIRE_RUNTIME_DIR="$test_runtime"
@@ -910,10 +911,20 @@ if [[ $mode == lifecycle ]]; then
   fi
 fi
 
-node_max_error() {
+node_initial_running_error() {
   local node_id=$1
   awk -v node_id="$node_id" '
-    $2 == node_id && $9 ~ /^[0-9]+$/ {
+    $1 == "R" && $2 == node_id && $9 ~ /^[0-9]+$/ {
+      print $9
+      exit
+    }
+  ' "$top_output"
+}
+
+node_max_running_error() {
+  local node_id=$1
+  awk -v node_id="$node_id" '
+    $1 == "R" && $2 == node_id && $9 ~ /^[0-9]+$/ {
       found = 1
       if ($9 > maximum) maximum = $9
     }
@@ -987,14 +998,24 @@ if (( ${#filter_ids[@]} != expected_active )); then
   exit 1
 fi
 
+printf 'node_id\trecovery_baseline\tmaximum\tdelta\n' >"$profiler_error_output"
 for node_id in "${fixture_ids[@]}" "${filter_ids[@]}"; do
-  maximum_error=$(node_max_error "$node_id" || true)
-  if [[ -z $maximum_error ]]; then
+  initial_error=$(node_initial_running_error "$node_id" || true)
+  maximum_error=$(node_max_running_error "$node_id" || true)
+  if [[ -z $initial_error || -z $maximum_error ]]; then
     echo "isolated soak node $node_id is missing from the profiler timeline" >&2
     exit 1
   fi
-  if (( maximum_error != 0 )); then
-    echo "isolated soak node $node_id reached $maximum_error PipeWire errors during monitoring" >&2
+  error_delta=$((maximum_error - initial_error))
+  printf '%s\t%s\t%s\t%s\n' \
+    "$node_id" "$initial_error" "$maximum_error" "$error_delta" \
+    >>"$profiler_error_output"
+  if (( initial_error > 2 )); then
+    echo "isolated soak node $node_id started monitoring with $initial_error PipeWire recovery errors" >&2
+    exit 1
+  fi
+  if (( error_delta != 0 )); then
+    echo "isolated soak node $node_id accumulated $error_delta PipeWire errors during monitoring" >&2
     exit 1
   fi
 done

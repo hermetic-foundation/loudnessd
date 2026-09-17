@@ -159,7 +159,8 @@ PipeWire tests or the soak harness against runner hardware.
 `tests/live/audio-soak.sh` starts a private PipeWire daemon and a policy-only
 WirePlumber instance in a temporary runtime directory. Playback mode drives two
 varied 48 kHz stereo playback streams into a disposable null sink; capture mode
-uses one application identity with simultaneous playback and capture streams.
+uses one application identity with simultaneous playback and capture streams;
+memory mode drives eight independent stereo playback applications.
 Hardware monitors are not loaded. Private clients disable realtime scheduling
 so an unpaced synthetic graph cannot trip the kernel realtime watchdog;
 real-graph integration covers production scheduling separately. The candidate
@@ -175,7 +176,7 @@ post-recovery target. After pause/resume and monitoring, the complete volume,
 mute, channel-volume, soft-volume, monitor-control, and target state must match
 exactly. A mismatch retains before-and-after diagnostics and fails the run.
 
-Monitoring requires exactly two active streams. The harness retains NDJSON
+Monitoring requires exactly the active-stream count for its selected mode. The harness retains NDJSON
 status, private server and session-manager logs, and one continuous `pw-top`
 timeline spanning the monitoring interval. That timeline must contain both
 fixture nodes and both loudnessd filter nodes, and every observed error counter

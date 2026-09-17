@@ -5,8 +5,7 @@
 Pass for the bounded two-stream qualification. This run validates the soak
 harness, observability, settled convergence scoring, short-run resource
 stability, varied boost behavior, routing, and cleanup. It does not replace the
-required eight-hour release soak, eight-stream memory test, direct application
-volume invariant check, or recovery matrix.
+required eight-hour release soak or complete recovery matrix.
 
 ## Environment
 
@@ -159,11 +158,38 @@ PipeWire errors, route failures, callback stalls, IPC failures, and memory
 growth. This proves the assertion and bounded behavior; the same assertion must
 remain enabled for the required eight-hour run.
 
+## Eight-stream resource qualification
+
+Candidate `4cf1b48b489e` passed a 30-second release-build run with eight
+independent stereo playback applications in the private PipeWire graph. The
+harness replaced the sink while all fixtures remained alive, then required all
+eight managed routes to recover before monitoring. Application control state
+and normalization targets remained unchanged across recovery.
+
+| Measurement | Result |
+| --- | ---: |
+| Active streams in every monitor sample | 8 |
+| Active-stream shortfalls | 0 |
+| IPC failures | 0 |
+| Daemon restarts | 0 |
+| Skipped-stream observations | 0 |
+| Unhealthy-route observations | 0 |
+| Stalled-callback observations | 0 |
+| Fixture and filter PipeWire xruns | 0 |
+| Initial, final, and peak resident memory | 13.47 MiB |
+| Resident-memory growth | 0 bytes |
+| Average process CPU | 20.97% of one core |
+
+The same candidate produced xruns when the complete real-time test graph was
+artificially demoted with `nice +10`; at normal scheduling priority every
+filter remained at zero xruns. Build throttling and runtime scheduling are
+therefore kept separate. This bounded test satisfies the eight-stream resource
+case, but does not replace the eight-hour varied-content soak.
+
 ## Remaining release evidence
 
 - Complete the eight-hour varied-content soak and measure memory growth from
   hour one through hour eight.
-- Run the eight-stream memory case.
 - Retain the now-automated application control and target invariant throughout
   the full eight-hour soak.
 - Exercise limiter-bound material and verify the configured peak ceiling.

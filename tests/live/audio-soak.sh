@@ -577,12 +577,12 @@ if [[ $mode == playback ]]; then
   generate_first_stream "$first_fixture"
   generate_second_stream "$second_fixture"
 
-  repeat_fixture "$first_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+  repeat_fixture "$first_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --latency 500ms --target "$sink_name" \
     --rate "$sample_rate" --channels "$channels" --channel-map "$channel_map" --format f32 \
     --properties='application.id=loudnessd.soak.continuous application.name=Loudnessd-Soak-Continuous' - &
   stream_pids+=("$!")
 
-  repeat_fixture "$second_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+  repeat_fixture "$second_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --latency 500ms --target "$sink_name" \
     --rate "$sample_rate" --channels "$channels" --channel-map "$channel_map" --format f32 \
     --properties='application.id=loudnessd.soak.intermittent application.name=Loudnessd-Soak-Intermittent' - &
   stream_pids+=("$!")
@@ -590,12 +590,12 @@ elif [[ $mode == capture ]]; then
   second_fixture=$test_runtime/second-stream.raw
   generate_second_stream "$second_fixture"
 
-  repeat_fixture "$second_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+  repeat_fixture "$second_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --latency 500ms --target "$sink_name" \
     --rate "$sample_rate" --channels "$channels" --channel-map "$channel_map" --format f32 \
     --properties='application.id=loudnessd.soak.duplex application.name=Loudnessd-Soak-Duplex' - &
   stream_pids+=("$!")
 
-  "${private_env[@]}" pw-cat --record --raw --target 0 \
+  "${private_env[@]}" pw-cat --record --raw --latency 500ms --target 0 \
     --rate "$sample_rate" --channels "$channels" --channel-map "$channel_map" --format f32 \
     --properties='application.id=loudnessd.soak.duplex application.name=Loudnessd-Soak-Duplex' \
     /dev/null &
@@ -610,7 +610,7 @@ elif [[ $mode == lifecycle ]]; then
   lifecycle_fixture=$test_runtime/lifecycle-stream.raw
   generate_first_stream "$lifecycle_fixture"
 
-  repeat_fixture "$lifecycle_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+  repeat_fixture "$lifecycle_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --latency 500ms --target "$sink_name" \
     --rate "$sample_rate" --channels "$channels" --channel-map "$channel_map" --format f32 \
     --properties='application.id=loudnessd.soak.lifecycle application.name=Loudnessd-Soak-Lifecycle' - &
   stream_pids+=("$!")
@@ -618,7 +618,7 @@ elif [[ $mode == limiter ]]; then
   limiter_fixture=$test_runtime/limiter-stream.raw
   generate_limiter_stream "$limiter_fixture"
 
-  repeat_fixture "$limiter_fixture" 1 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+  repeat_fixture "$limiter_fixture" 1 | "${private_env[@]}" pw-cat --playback --raw --latency 500ms --target "$sink_name" \
     --rate "$sample_rate" --channels "$channels" --channel-map "$channel_map" --format f32 \
     --properties='application.id=loudnessd.soak.limiter application.name=Loudnessd-Soak-Limiter' - &
   stream_pids+=("$!")
@@ -627,7 +627,7 @@ else
   generate_second_stream "$second_fixture"
 
   for index in {0..7}; do
-    repeat_fixture "$second_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+    repeat_fixture "$second_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --latency 500ms --target "$sink_name" \
       --rate "$sample_rate" --channels "$channels" --channel-map "$channel_map" --format f32 \
       --properties="application.id=loudnessd.soak.memory.$index application.name=Loudnessd-Soak-Memory-$index" - &
     stream_pids+=("$!")

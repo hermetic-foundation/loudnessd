@@ -159,16 +159,21 @@ PipeWire tests or the soak harness against runner hardware.
 `tests/live/playback-soak.sh` starts a private PipeWire daemon and a policy-only
 WirePlumber instance in a temporary runtime directory, then drives two varied
 48 kHz stereo streams into its disposable null sink. Hardware monitors are not
-loaded. The candidate daemon, IPC socket, graph, fixtures, and recovery journal
-therefore cannot observe or modify desktop applications or hardware. Before
-monitoring, the harness destroys and replaces the sink while both application
-streams remain alive, and requires both managed routes to return healthy. This
-reproduces endpoint replacement without exposing interactive audio to the
-recovery path. Monitoring then requires exactly two active streams. The harness
-retains NDJSON status, private server and session-manager logs, and a final
-`pw-top` snapshot that must contain both fixture node IDs with zero errors, but
-no audio. Its exit trap removes the complete private runtime and never starts,
-stops, or reloads the user's ordinary PipeWire or loudnessd services.
+loaded. Private clients disable realtime scheduling so an unpaced synthetic
+graph cannot trip the kernel realtime watchdog; real-graph integration covers
+production scheduling separately. The candidate daemon, IPC socket, graph,
+fixtures, and recovery journal therefore cannot observe or modify desktop
+applications or hardware. Before monitoring, the harness destroys and replaces
+the sink while both application streams remain alive. Replacement is identified
+by PipeWire object serial rather than its recyclable global ID, and both managed
+routes must return healthy. This reproduces endpoint replacement without
+exposing interactive audio to the recovery path. Monitoring then requires
+exactly two active streams. The harness retains NDJSON status, private server
+and session-manager logs, and a final three-frame `pw-top` snapshot that must
+contain both fixture nodes and both loudnessd filter nodes with zero errors.
+Private service logs must contain no error entries, and no audio is retained.
+Its exit trap removes the complete private runtime and never starts, stops, or
+reloads the user's ordinary PipeWire or loudnessd services.
 
 Native desktop validation on NixOS additionally covered:
 

@@ -58,6 +58,39 @@ R128 meters and true-peak analysis. The previous `2%` criterion was not based
 on a measured implementation and would require weakening the required
 post-filter observability rather than addressing an observed instability.
 
+## Isolated endpoint-recovery qualification
+
+Candidate `7b9934e05885bfa9220d52057f839b4876eaa063` passed a separate
+15-second bounded run in the fully private PipeWire graph. Both fixtures were
+selected by their stable `application.id` values rather than display names.
+The harness replaced the sink with a new PipeWire object while both streams
+remained alive; both routes detected the endpoint loss, released stale graph
+ownership, and returned to healthy normalization without a daemon restart.
+
+| Measurement | Result |
+| --- | ---: |
+| Monitor samples | 15 |
+| Active streams in every sample | 2 |
+| IPC failures | 0 |
+| Daemon restarts | 0 |
+| Skipped-stream observations | 0 |
+| Unhealthy-route observations | 0 |
+| Stalled-callback observations | 0 |
+| Fixture and filter PipeWire errors | 0 |
+| Private PipeWire and WirePlumber errors | 0 |
+| Initial resident memory | 8.10 MiB |
+| Final resident memory | 8.11 MiB |
+| Resident-memory growth | 4 KiB |
+| Average process CPU | 3.53% of one core |
+
+The short run ended while both deliberately quiet fixtures were still slewing
+toward the `-13 LUFS` target, so it supplies recovery and resource evidence but
+no convergence-ratio evidence. It does not replace the eight-hour release soak.
+The same graph with an unoptimized debug binary consumed most of one core and
+tripped the kernel realtime watchdog; the harness now disables realtime only
+inside its private runtime, and release qualification always uses the optimized
+package artifact.
+
 ## Remaining release evidence
 
 - Complete the eight-hour varied-content soak and measure memory growth from

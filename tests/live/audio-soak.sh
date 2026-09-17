@@ -4,7 +4,7 @@
 set -euo pipefail
 
 if (( $# < 6 || $# > 7 )); then
-  echo "usage: audio-soak.sh LOUDNESSD SOX PIPEWIRE WIREPLUMBER DURATION_SECONDS OUTPUT [playback|capture]" >&2
+  echo "usage: audio-soak.sh LOUDNESSD SOX PIPEWIRE WIREPLUMBER DURATION_SECONDS OUTPUT [playback|capture|memory]" >&2
   exit 2
 fi
 
@@ -25,6 +25,11 @@ case $mode in
     expected_active=2
     pause_application=loudnessd.soak.duplex
     pause_domain=capture
+    ;;
+  memory)
+    expected_active=8
+    pause_application=loudnessd.soak.memory.0
+    pause_domain=playback
     ;;
   *)
     echo "unknown soak mode: $mode" >&2
@@ -108,7 +113,7 @@ if [[ $mode == playback ]]; then
     '[applications."loudnessd.soak.intermittent"]' \
     'playback = true' \
     'capture = false' >"$test_config"
-else
+elif [[ $mode == capture ]]; then
   printf '%s\n' \
     '[defaults]' \
     'playback = false' \
@@ -117,6 +122,15 @@ else
     '[applications."loudnessd.soak.duplex"]' \
     'playback = true' \
     'capture = true' >"$test_config"
+else
+  printf '%s\n' \
+    '[defaults]' \
+    'playback = false' \
+    'capture = false' >"$test_config"
+  for index in {0..7}; do
+    printf '\n[applications."loudnessd.soak.memory.%d"]\nplayback = true\ncapture = false\n' \
+      "$index" >>"$test_config"
+  done
 fi
 
 "${private_env[@]}" "$pipewire" >"$server_log" 2>&1 &
@@ -176,6 +190,22 @@ wait_for_sink() {
     ')
     if [[ -n $sink ]]; then
       IFS=$'\t' read -r sink_id sink_serial <<<"$sink"
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_for_sink_removal() {
+  local removed_serial=$1
+  for _ in {1..50}; do
+    if ! "${private_env[@]}" pw-dump | jq -e --arg name "$sink_name" --arg serial "$removed_serial" '
+      any(.[]; select(
+        .info.props["node.name"]? == $name and
+        (.info.props["object.serial"] | tostring) == $serial
+      ))
+    ' >/dev/null; then
       return 0
     fi
     sleep 0.1
@@ -293,7 +323,7 @@ if [[ $mode == playback ]]; then
     --rate 48000 --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.intermittent application.name=Loudnessd-Soak-Intermittent' - &
   stream_pids+=("$!")
-else
+elif [[ $mode == capture ]]; then
   second_fixture=$test_runtime/second-stream.raw
   generate_second_stream "$second_fixture"
 
@@ -313,6 +343,16 @@ else
     exit 1
   fi
   link_capture_monitor
+else
+  second_fixture=$test_runtime/second-stream.raw
+  generate_second_stream "$second_fixture"
+
+  for index in {0..7}; do
+    cat "$second_fixture" | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+      --rate 48000 --channels 2 --channel-map Stereo --format f32 \
+      --properties="application.id=loudnessd.soak.memory.$index application.name=Loudnessd-Soak-Memory-$index" - &
+    stream_pids+=("$!")
+  done
 fi
 
 ready=false
@@ -341,7 +381,7 @@ fi
 
 for index in "${!fixture_ids[@]}"; do
   node_id=${fixture_ids[$index]}
-  fixture_volume=$(printf '0.%02d' "$((67 + index * 12))")
+  fixture_volume=$(printf '0.%02d' "$((67 + index * 4))")
   "${private_env[@]}" wpctl set-volume "$node_id" "$fixture_volume"
   "${private_env[@]}" wpctl set-mute "$node_id" 0
 done
@@ -354,6 +394,11 @@ previous_sink_serial=$sink_serial
 "${private_env[@]}" pw-cli destroy "$sink_id"
 sink_id=
 sink_serial=
+if ! wait_for_sink_removal "$previous_sink_serial"; then
+  save_startup_diagnostics
+  echo "original soak sink did not disappear" >&2
+  exit 1
+fi
 create_sink
 if ! wait_for_sink "$previous_sink_serial"; then
   save_startup_diagnostics

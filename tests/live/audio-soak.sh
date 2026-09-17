@@ -516,9 +516,11 @@ generate_first_stream() {
   fi
   {
     "$sox" -q -n -t raw -e floating-point -b 32 -L -r "$sample_rate" -c "$channels" - \
-      synth 45 "${tones[@]}" vol 0.035
+      synth 20 "${tones[@]}" vol 0.035
     "$sox" -q -n -t raw -e floating-point -b 32 -L -r "$sample_rate" -c "$channels" - \
-      synth 15 "${tones[@]}" vol 0.003
+      synth 20 "${tones[@]}" vol 0.6
+    "$sox" -q -n -t raw -e floating-point -b 32 -L -r "$sample_rate" -c "$channels" - \
+      synth 20 "${tones[@]}" vol 0.003
   } >"$output_file"
 }
 
@@ -530,11 +532,13 @@ generate_second_stream() {
   fi
   {
     "$sox" -q -n -t raw -e floating-point -b 32 -L -r "$sample_rate" -c "$channels" - \
-      synth 30 pinknoise vol 0.12
+      synth 20 pinknoise vol 0.12
     "$sox" -q -n -t raw -e floating-point -b 32 -L -r "$sample_rate" -c "$channels" - \
       synth 10 "${tones[@]}" vol 0
     "$sox" -q -n -t raw -e floating-point -b 32 -L -r "$sample_rate" -c "$channels" - \
-      synth 20 "${tones[@]}" vol 0.08
+      synth 15 "${tones[@]}" vol 0.08
+    "$sox" -q -n -t raw -e floating-point -b 32 -L -r "$sample_rate" -c "$channels" - \
+      synth 15 "${tones[@]}" vol 0.6
   } >"$output_file"
 }
 
@@ -943,6 +947,16 @@ if [[ $mode == limiter ]] && ! jq -e '
   .maximum_output_true_peak_dbtp <= -0.95
 ' "$summary_output" >/dev/null; then
   echo "limiter qualification did not engage or exceeded the -1 dBTP ceiling" >&2
+  exit 1
+fi
+
+if [[ $mode == playback ]] && ! jq -e '
+  .boost_observations > 0 and
+  .cut_observations > 0 and
+  .minimum_gain_db < -0.01 and
+  .maximum_gain_db > 0.01
+' "$summary_output" >/dev/null; then
+  echo "playback qualification did not exercise both boost and cut gain paths" >&2
   exit 1
 fi
 

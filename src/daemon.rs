@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use std::{
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     error::Error,
     path::PathBuf,
@@ -590,9 +591,39 @@ pub fn run(
     let main_loop = MainLoopRc::new(None)?;
     let context = ContextRc::new(&main_loop, None)?;
     let core = context.connect_rc(None)?;
+    let server_cookie = Rc::new(Cell::new(None));
+    let connection_error = Rc::new(RefCell::new(None));
+    let cookie_callback = Rc::clone(&server_cookie);
+    let error_callback = Rc::clone(&connection_error);
+    let _core_listener = core
+        .add_listener_local()
+        .info(move |info| cookie_callback.set(Some(info.cookie())))
+        .error(move |id, sequence, result, message| {
+            if is_fatal_core_error(id, result) {
+                *error_callback.borrow_mut() = Some(format!(
+                    "{message} (object {id}, sequence {sequence}, result {result})"
+                ));
+            }
+        })
+        .register();
+    let cookie_deadline = Instant::now() + Duration::from_secs(2);
+    while server_cookie.get().is_none()
+        && connection_error.borrow().is_none()
+        && Instant::now() < cookie_deadline
+    {
+        main_loop
+            .loop_()
+            .iterate(Timeout::Finite(Duration::from_millis(20)));
+    }
+    if let Some(error) = connection_error.borrow_mut().take() {
+        return Err(format!("PipeWire connection failed: {error}").into());
+    }
+    let server_cookie = server_cookie
+        .get()
+        .ok_or("PipeWire did not report its server identity")?;
     let registry = core.get_registry_rc()?;
     let (graph, _registry_listener) = track_graph(&registry);
-    let recovery_journal = RecoveryJournal::new(path_for_socket(&socket_path));
+    let recovery_journal = RecoveryJournal::new(path_for_socket(&socket_path), server_cookie);
     let control_server = ControlServer::bind(socket_path)?;
     let terminated = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(SIGINT, Arc::clone(&terminated))?;
@@ -616,10 +647,13 @@ pub fn run(
     daemon.recover_prior_routes();
 
     eprintln!("loudnessd: monitoring and normalizing PipeWire application streams");
-    while !terminated.load(Ordering::Relaxed) {
+    while !terminated.load(Ordering::Relaxed) && connection_error.borrow().is_none() {
         main_loop.loop_().iterate(Timeout::Finite(CONTROL_INTERVAL));
         daemon.tick();
         daemon.process_requests(&control_server);
+    }
+    if let Some(error) = connection_error.borrow_mut().take() {
+        return Err(format!("PipeWire connection failed: {error}").into());
     }
     if daemon.bypass_all() {
         Ok(())
@@ -628,9 +662,26 @@ pub fn run(
     }
 }
 
+fn is_fatal_core_error(id: u32, result: i32) -> bool {
+    id == pipewire::core::PW_ID_CORE && result == -libc::EPIPE
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_broken_core_connections_are_fatal() {
+        assert!(is_fatal_core_error(
+            pipewire::core::PW_ID_CORE,
+            -libc::EPIPE
+        ));
+        assert!(!is_fatal_core_error(6, -libc::EEXIST));
+        assert!(!is_fatal_core_error(
+            pipewire::core::PW_ID_CORE,
+            -libc::EEXIST
+        ));
+    }
 
     #[test]
     fn application_identity_prefers_stable_metadata() {

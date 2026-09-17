@@ -16,23 +16,36 @@ use crate::routing::LinkSpec;
 #[serde(deny_unknown_fields)]
 struct JournalData {
     #[serde(default)]
+    server_cookie: u32,
+    #[serde(default)]
     direct_links: Vec<LinkSpec>,
 }
 
 pub struct RecoveryJournal {
     path: PathBuf,
+    server_cookie: u32,
 }
 
 impl RecoveryJournal {
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+    pub fn new(path: impl Into<PathBuf>, server_cookie: u32) -> Self {
+        Self {
+            path: path.into(),
+            server_cookie,
+        }
     }
 
     pub fn load(&self) -> io::Result<Vec<LinkSpec>> {
         match std::fs::read_to_string(&self.path) {
-            Ok(source) => toml::from_str::<JournalData>(&source)
-                .map(|journal| journal.direct_links)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
+            Ok(source) => {
+                let journal = toml::from_str::<JournalData>(&source)
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                if journal.server_cookie == self.server_cookie {
+                    Ok(journal.direct_links)
+                } else {
+                    self.remove()?;
+                    Ok(Vec::new())
+                }
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
             Err(error) => Err(error),
         }
@@ -40,14 +53,11 @@ impl RecoveryJournal {
 
     pub fn replace(&self, links: &[LinkSpec]) -> io::Result<()> {
         if links.is_empty() {
-            return match std::fs::remove_file(&self.path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error),
-            };
+            return self.remove();
         }
 
         let source = toml::to_string(&JournalData {
+            server_cookie: self.server_cookie,
             direct_links: links.to_vec(),
         })
         .map_err(io::Error::other)?;
@@ -61,6 +71,14 @@ impl RecoveryJournal {
         file.write_all(source.as_bytes())?;
         file.sync_all()?;
         std::fs::rename(temporary, &self.path)
+    }
+
+    fn remove(&self) -> io::Result<()> {
+        match std::fs::remove_file(&self.path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -84,12 +102,15 @@ mod tests {
 
     static NEXT_PATH: AtomicUsize = AtomicUsize::new(0);
 
-    fn journal() -> RecoveryJournal {
-        RecoveryJournal::new(std::env::temp_dir().join(format!(
-            "loudnessd-recovery-{}-{}.toml",
-            std::process::id(),
-            NEXT_PATH.fetch_add(1, Ordering::Relaxed)
-        )))
+    fn journal(server_cookie: u32) -> RecoveryJournal {
+        RecoveryJournal::new(
+            std::env::temp_dir().join(format!(
+                "loudnessd-recovery-{}-{}.toml",
+                std::process::id(),
+                NEXT_PATH.fetch_add(1, Ordering::Relaxed)
+            )),
+            server_cookie,
+        )
     }
 
     fn link() -> LinkSpec {
@@ -107,7 +128,7 @@ mod tests {
 
     #[test]
     fn atomically_round_trips_private_route_state() {
-        let journal = journal();
+        let journal = journal(42);
         journal.replace(&[link()]).unwrap();
 
         assert_eq!(journal.load().unwrap(), [link()]);
@@ -125,6 +146,16 @@ mod tests {
 
     #[test]
     fn missing_journal_is_an_empty_recovery_set() {
-        assert!(journal().load().unwrap().is_empty());
+        assert!(journal(42).load().unwrap().is_empty());
+    }
+
+    #[test]
+    fn discards_routes_from_a_different_pipewire_server() {
+        let journal = journal(42);
+        journal.replace(&[link()]).unwrap();
+        let replacement_server = RecoveryJournal::new(&journal.path, 43);
+
+        assert!(replacement_server.load().unwrap().is_empty());
+        assert!(!journal.path.exists());
     }
 }

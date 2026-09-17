@@ -54,6 +54,27 @@ run does not establish non-silent convergence from real microphone hardware.
   starving the capture fixture while starting a new generator process at a
   section boundary and keeps the zero-error gate meaningful.
 
+## Source replacement regression
+
+Product candidate `f39e1c42c9bf538d6cff6644d23b1c3864f9f7a1`, exercised by
+harness candidate `ebfe00ca621a275219a94d8465e5a08889e89f7c`, passed a
+30-second private-graph duplex run after the source-bearing null device was
+destroyed and recreated. The capture monitor was linked only to the replacement
+device before monitoring resumed.
+
+- Both playback and capture routes remained active and healthy in all 30
+  observations, with independent `-13 LUFS` and `-18 LUFS` targets.
+- IPC failures, daemon restarts, active-stream shortfalls, skipped streams,
+  unhealthy routes, callback stalls, and PipeWire xruns were all zero.
+- Application volume, mute, channel controls, and persistent target metadata
+  remained byte-for-byte unchanged across replacement and pause/resume.
+- Resident memory remained at approximately 8.4 MiB with zero measured growth;
+  average daemon CPU was 6.7% of one core for both directions together.
+- The short changing-content window scored 12 of 15 eligible settled samples
+  within tolerance. This 80% aggregate is recorded for transparency but is not
+  used as convergence evidence because the fixture crossed a loud-to-silent
+  section boundary during the run.
+
 ## Remaining capture evidence
 
 - Repeat the native recorder probe with a sustained non-silent microphone

@@ -142,6 +142,10 @@ elif [[ $mode == lifecycle ]]; then
     '' \
     '[applications."loudnessd.soak.lifecycle"]' \
     'playback = true' \
+    'capture = false' \
+    '' \
+    '[applications."loudnessd.soak.exiting"]' \
+    'playback = true' \
     'capture = false' >"$test_config"
 elif [[ $mode == limiter ]]; then
   printf '%s\n' \
@@ -390,6 +394,59 @@ wait_for_stable_healthy_routes() {
     fi
     if [[ -n $daemon_pid ]] && ! kill -0 "$daemon_pid" 2>/dev/null; then
       return 1
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_for_active_count() {
+  local expected=$1
+  for _ in {1..100}; do
+    status=$("${private_env[@]}" "$loudnessd" msg status-json 2>/dev/null || true)
+    if jq -e --argjson expected "$expected" '
+      .enabled and .active == $expected and .managed == $expected and .skipped == 0 and
+      all(.streams[]; .route == "healthy")
+    ' >/dev/null 2>&1 <<<"$status"; then
+      return 0
+    fi
+    if [[ -n $daemon_pid ]] && ! kill -0 "$daemon_pid" 2>/dev/null; then
+      return 1
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_for_application_removal() {
+  local application_id=$1
+  for _ in {1..50}; do
+    if ! "${private_env[@]}" pw-dump | jq -e --arg application_id "$application_id" '
+      any(.[];
+        .type == "PipeWire:Interface:Node" and
+        .info.props["application.id"]? == $application_id
+      )
+    ' >/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_for_filter_identity_removal() {
+  local filter_id=$1
+  local filter_name=$2
+  for _ in {1..50}; do
+    if ! "${private_env[@]}" pw-dump | jq -e \
+      --argjson filter_id "$filter_id" --arg filter_name "$filter_name" '
+      any(.[];
+        .id == $filter_id and
+        .type == "PipeWire:Interface:Node" and
+        .info.props["node.name"]? == $filter_name
+      )
+    ' >/dev/null; then
+      return 0
     fi
     sleep 0.1
   done
@@ -752,6 +809,34 @@ if [[ $mode == lifecycle ]]; then
   if ! wait_for_wireplumber || ! wait_for_stable_healthy_routes; then
     save_startup_diagnostics
     echo "lifecycle stream did not remain healthy after WirePlumber restart" >&2
+    exit 1
+  fi
+
+  repeat_fixture "$lifecycle_fixture" 60 | "${private_env[@]}" pw-cat \
+    --playback --raw --target "$sink_name" \
+    --rate 48000 --channels 2 --channel-map Stereo --format f32 \
+    --properties='application.id=loudnessd.soak.exiting application.name=Loudnessd-Soak-Exiting' - &
+  exiting_pid=$!
+  stream_pids+=("$exiting_pid")
+  if ! wait_for_active_count 2; then
+    save_startup_diagnostics
+    echo "exiting lifecycle stream did not become healthy" >&2
+    exit 1
+  fi
+  exiting_node_id=$(jq -r '
+    first(.streams[] | select(.application == "loudnessd.soak.exiting") | .node_id) // empty
+  ' <<<"$status")
+  exiting_filter_id=$(jq -r '
+    first(.streams[] | select(.application == "loudnessd.soak.exiting") | .filter_node_id) // empty
+  ' <<<"$status")
+  exiting_filter_name="loudnessd-playback-$exiting_node_id"
+  kill "$exiting_pid"
+  wait "$exiting_pid" 2>/dev/null || true
+  if ! wait_for_active_count 1 ||
+    ! wait_for_application_removal loudnessd.soak.exiting ||
+    ! wait_for_filter_identity_removal "$exiting_filter_id" "$exiting_filter_name"; then
+    save_startup_diagnostics
+    echo "application exit left managed state or a filter node behind" >&2
     exit 1
   fi
 fi

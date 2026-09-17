@@ -151,6 +151,21 @@
                 shellcheck "$harness"
                 touch "$out"
               '';
+          portable-systemd =
+            pkgs.runCommand "loudnessd-portable-systemd-check"
+              {
+                nativeBuildInputs = [ pkgs.systemd ];
+                serviceFile = "${loudnessd}/lib/systemd/user/loudnessd.service";
+              }
+              ''
+                grep -Fxq 'ExecStart=${nixpkgs.lib.getExe loudnessd} --daemon' "$serviceFile"
+                mkdir -p home runtime
+                HOME="$PWD/home" \
+                  XDG_RUNTIME_DIR="$PWD/runtime" \
+                  SYSTEMD_UNIT_PATH=${loudnessd}/lib/systemd/user:${pkgs.pipewire}/lib/systemd/user:${pkgs.systemd}/example/systemd/user \
+                  systemd-analyze --user verify "$serviceFile"
+                touch "$out"
+              '';
           module =
             assert builtins.elem "graphical-session.target" service.wantedBy;
             assert builtins.elem "pipewire.service" service.partOf;

@@ -82,3 +82,25 @@ This longer probe confirms stable physical-device routing and silence-gate
 behavior on the release candidate. It still does not satisfy the non-silent
 physical-microphone convergence gate because no sustained signal crossed the
 capture silence threshold.
+
+## Native browser duplex probe
+
+An isolated Chromium profile subsequently ran a localhost media page with a
+real `getUserMedia` microphone track and a Web Audio playback track at the same
+time. The playback oscillator was set to one millionth of full scale so it
+created real callbacks without becoming audible.
+
+- The same `chromium` application identity exposed one playback route and one
+  capture route for all 60 half-second observations.
+- Both routes remained healthy, with playback sequence advancing from 4 to
+  3,331 and capture sequence advancing from 30 to 6,682.
+- Playback and capture retained independent control state and both stayed at
+  unity gain because their signals were below their respective silence gates.
+- Maximum playback output peak was `-119.99 dBTP`; maximum capture output peak
+  was `-56.35 dBTP`.
+- The temporary browser profile, localhost server, playback and capture
+  streams, and all temporary files were removed afterward.
+
+This establishes simultaneous native-browser playback/capture discovery,
+routing, callback progress, and direction isolation. It does not replace a
+non-silent bidirectional voice-call test.

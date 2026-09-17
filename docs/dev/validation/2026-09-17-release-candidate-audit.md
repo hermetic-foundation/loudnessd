@@ -51,6 +51,7 @@ convergence, profiler, process-identity, CPU, and memory assertion.
 | Synthetic non-silent duplex capture | Pass | A 120-second private-graph run exercised independent playback and capture gain in both directions. |
 | Native recorder routing | Partial | A real Scarlett capture route remained healthy, but the source stayed below the silence gate. |
 | Browser WebRTC routing | Partial | Real `getUserMedia` routing and direction isolation passed, but the microphone signal remained silent. |
+| Native browser duplex routing | Pass | One Chromium identity held healthy playback and capture routes with independent callback progress and gain state for 60 observations. |
 | Non-silent physical microphone convergence | Open | A sustained signal above the capture silence gate is still required. |
 | Bidirectional voice application | Open | No active voice capture node was available during this audit. |
 | Wine or Proton capture | Open | No suitable Wine or Proton capture client was active. Skyrim playback has been validated separately. |

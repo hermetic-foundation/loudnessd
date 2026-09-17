@@ -15,6 +15,48 @@ pub struct ControllerConfig {
     pub cut_rate_db_per_second: f32,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ControllerConfigOverride {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_lufs: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub silence_gate_lufs: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deadband_lu: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maximum_boost_db: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maximum_cut_db: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boost_rate_db_per_second: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cut_rate_db_per_second: Option<f32>,
+}
+
+impl ControllerConfigOverride {
+    pub fn resolve(self, inherited: ControllerConfig) -> Result<ControllerConfig, &'static str> {
+        ControllerConfig {
+            target_lufs: self.target_lufs.unwrap_or(inherited.target_lufs),
+            silence_gate_lufs: self
+                .silence_gate_lufs
+                .unwrap_or(inherited.silence_gate_lufs),
+            deadband_lu: self.deadband_lu.unwrap_or(inherited.deadband_lu),
+            maximum_boost_db: self
+                .maximum_boost_db
+                .unwrap_or(inherited.maximum_boost_db),
+            maximum_cut_db: self.maximum_cut_db.unwrap_or(inherited.maximum_cut_db),
+            boost_rate_db_per_second: self
+                .boost_rate_db_per_second
+                .unwrap_or(inherited.boost_rate_db_per_second),
+            cut_rate_db_per_second: self
+                .cut_rate_db_per_second
+                .unwrap_or(inherited.cut_rate_db_per_second),
+        }
+        .validate()
+    }
+}
+
 impl Default for ControllerConfig {
     fn default() -> Self {
         Self {
@@ -142,6 +184,8 @@ impl ApplicationPolicyOverride {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UserConfig {
+    pub playback: ControllerConfigOverride,
+    pub capture: ControllerConfigOverride,
     pub defaults: ApplicationPolicyOverride,
     pub applications: BTreeMap<String, ApplicationPolicyOverride>,
 }
@@ -149,6 +193,15 @@ pub struct UserConfig {
 impl UserConfig {
     pub fn from_toml(source: &str) -> Result<Self, toml::de::Error> {
         toml::from_str(source)
+    }
+
+    pub fn controller_configs(
+        &self,
+    ) -> Result<(ControllerConfig, ControllerConfig), &'static str> {
+        Ok((
+            self.playback.resolve(ControllerConfig::default())?,
+            self.capture.resolve(ControllerConfig::capture_default())?,
+        ))
     }
 }
 
@@ -231,13 +284,17 @@ impl ControllerBank {
             .unwrap_or(self.default_policy)
     }
 
-    pub fn apply_user_config(&mut self, config: UserConfig) {
+    pub fn apply_user_config(&mut self, config: UserConfig) -> Result<(), &'static str> {
+        let (playback, capture) = config.controller_configs()?;
+        self.playback.config = playback;
+        self.capture.config = capture;
         self.default_policy = config.defaults.resolve(ApplicationPolicy::default());
         self.policies = config
             .applications
             .into_iter()
             .map(|(application_id, policy)| (application_id, policy.resolve(self.default_policy)))
             .collect();
+        Ok(())
     }
 
     pub fn stream(&self, domain: SignalDomain, stream_id: &str) -> Option<StreamState> {
@@ -468,6 +525,53 @@ mod tests {
     }
 
     #[test]
+    fn user_config_overrides_directional_controller_settings() {
+        let config = UserConfig::from_toml(
+            r#"
+                [playback]
+                target_lufs = -17.5
+                maximum_boost_db = 8.0
+
+                [capture]
+                target_lufs = -20.0
+                boost_rate_db_per_second = 0.25
+            "#,
+        )
+        .unwrap();
+        let mut controllers = ControllerBank::defaults();
+
+        controllers.apply_user_config(config).unwrap();
+
+        let playback = controllers.config(SignalDomain::Playback);
+        assert_eq!(playback.target_lufs, -17.5);
+        assert_eq!(playback.maximum_boost_db, 8.0);
+        assert_eq!(playback.silence_gate_lufs, -50.0);
+        let capture = controllers.config(SignalDomain::Capture);
+        assert_eq!(capture.target_lufs, -20.0);
+        assert_eq!(capture.boost_rate_db_per_second, 0.25);
+        assert_eq!(capture.maximum_boost_db, 12.0);
+    }
+
+    #[test]
+    fn invalid_directional_controller_settings_are_rejected_atomically() {
+        let config = UserConfig::from_toml(
+            r#"
+                [playback]
+                target_lufs = -60.0
+            "#,
+        )
+        .unwrap();
+        let mut controllers = ControllerBank::defaults();
+        let before = controllers.config(SignalDomain::Playback);
+
+        assert_eq!(
+            controllers.apply_user_config(config),
+            Err("silence gate must be below the target loudness")
+        );
+        assert_eq!(controllers.config(SignalDomain::Playback), before);
+    }
+
+    #[test]
     fn playback_gate_ignores_quiet_auxiliary_streams() {
         let mut controller = controller();
         assert_eq!(
@@ -567,7 +671,7 @@ mod tests {
         )
         .unwrap();
         let mut controllers = ControllerBank::defaults();
-        controllers.apply_user_config(config);
+        controllers.apply_user_config(config).unwrap();
         let observation = Observation {
             lufs: -30.0,
             elapsed_seconds: 1.0,

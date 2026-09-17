@@ -168,10 +168,16 @@ impl Daemon {
     }
 
     fn reconfigure(&mut self, next: RuntimeConfig) -> Result<(), String> {
+        let effective = next.effective();
+        effective
+            .controller_configs()
+            .map_err(|error| format!("invalid controller configuration: {error}"))?;
         if !self.bypass_all() {
             return Err("could not bypass every stream; configuration was not applied".to_owned());
         }
-        self.controllers.apply_user_config(next.effective());
+        self.controllers
+            .apply_user_config(effective)
+            .expect("controller configuration was validated before bypass");
         self.runtime_config = next;
         self.skipped.clear();
         self.channel_settler.clear();

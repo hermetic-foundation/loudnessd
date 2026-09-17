@@ -113,7 +113,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         UserConfig::default()
     };
     let mut controllers = ControllerBank::defaults();
-    controllers.apply_user_config(baseline.clone());
+    controllers
+        .apply_user_config(baseline.clone())
+        .map_err(|error| format!("invalid controller configuration: {error}"))?;
 
     if list_streams {
         for stream in snapshot_streams()? {

@@ -23,5 +23,5 @@ mod true_peak;
 
 pub use control::{
     ApplicationPolicy, ApplicationPolicyOverride, Controller, ControllerBank, ControllerConfig,
-    Decision, Observation, SignalDomain, StreamState, UserConfig,
+    ControllerConfigOverride, Decision, Observation, SignalDomain, StreamState, UserConfig,
 };

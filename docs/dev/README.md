@@ -160,7 +160,8 @@ PipeWire tests or the soak harness against runner hardware.
 WirePlumber instance in a temporary runtime directory. Playback mode drives two
 varied 48 kHz stereo playback streams into a disposable null sink; capture mode
 uses one application identity with simultaneous playback and capture streams;
-memory mode drives eight independent stereo playback applications.
+limiter mode drives deterministic low-average, high-crest material; memory mode
+drives eight independent stereo playback applications.
 Hardware monitors are not loaded. Private clients disable realtime scheduling
 so an unpaced synthetic graph cannot trip the kernel realtime watchdog;
 real-graph integration covers production scheduling separately. The candidate

@@ -148,13 +148,13 @@ loudnessd monitor --duration 3600 --interval 1000 --expect-active 2 \
 The final JSON summary reports IPC failures, unhealthy routes, stalled callback
 sequences, daemon restarts, active-stream shortfalls, in-progress slew
 observations, skipped-stream observations, convergence within 1.5 LU after the
-controller settles, and maximum limiter reduction. It also records expected,
-minimum, and maximum active stream counts, the maximum simultaneous skipped
-stream count, initial, final, and peak resident memory, memory growth, and
-average daemon CPU use. CPU accounting remains valid across a daemon restart
-because status includes both the process ID and Linux process start time. The
-NDJSON contains status measurements and metadata only; it never contains audio
-samples.
+controller settles, maximum limiter reduction, and maximum observed post-filter
+true peak. It also records expected, minimum, and maximum active stream counts,
+the maximum simultaneous skipped stream count, initial, final, and peak resident
+memory, memory growth, and average daemon CPU use. CPU accounting remains valid
+across a daemon restart because status includes both the process ID and Linux
+process start time. The NDJSON contains status measurements and metadata only;
+it never contains audio samples.
 
 `disable` bypasses every active stream but leaves the daemon available.
 `reload` rereads the original `--config` path. `set` and `reset` are in-memory

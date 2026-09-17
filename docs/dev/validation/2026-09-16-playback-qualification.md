@@ -186,13 +186,37 @@ filter remained at zero xruns. Build throttling and runtime scheduling are
 therefore kept separate. This bounded test satisfies the eight-stream resource
 case, but does not replace the eight-hour varied-content soak.
 
+## True-peak limiter qualification
+
+Candidate `8227b3946e3f` passed a 30-second release-build run with a
+deterministic low-average, high-crest stereo fixture in the private PipeWire
+graph. The limiter engaged after normalization gain increased, and the harness
+asserted the configured `-1 dBTP` ceiling from the post-filter meter rather than
+from source samples.
+
+| Measurement | Result |
+| --- | ---: |
+| Maximum limiter reduction | 13.66 dB |
+| Maximum post-filter true peak | -1.10 dBTP |
+| Active streams in every monitor sample | 1 |
+| Unhealthy-route observations | 0 |
+| Stalled-callback observations | 0 |
+| Fixture and filter PipeWire xruns | 0 |
+| Resident-memory growth | 0 bytes |
+| Average process CPU | 3.30% of one core |
+
+The status stream remained JSON-serializable throughout, excluding non-finite
+published metrics. Candidate `b568b5068261` separately strengthened the exact
+limiter unit test to prove that a loud right channel applies the same reduction
+to a quiet left channel while retaining the true-peak ceiling. Together these
+tests cover live post-filter containment and linked stereo reduction.
+
 ## Remaining release evidence
 
 - Complete the eight-hour varied-content soak and measure memory growth from
   hour one through hour eight.
 - Retain the now-automated application control and target invariant throughout
   the full eight-hour soak.
-- Exercise limiter-bound material and verify the configured peak ceiling.
 - Exercise a real browser pause and resume. The synthetic node-command case now
   passes, but feeding zero-valued samples is not equivalent and browser graph
   policy still needs direct integration evidence.

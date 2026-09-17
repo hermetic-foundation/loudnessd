@@ -63,3 +63,22 @@ capture convergence and limiter behavior.
 
 The isolated Chromium process, temporary profile, page, and capture route were
 removed after the run. Helium and the target-trial daemon remained active.
+
+## Extended physical microphone probe
+
+The same candidate subsequently observed a direct `pw-record` client reading
+the Scarlett Mic 1 source for 120 seconds. Audio was discarded to `/dev/null`;
+the test retained only structured loudnessd observations.
+
+- The capture route was active and healthy for 119 observations, with no
+  skipped streams.
+- The real-time sequence advanced from 6 to 6,098 without stalling.
+- Source loudness remained between `-69.10` and `-68.55 LUFS`; output loudness
+  remained between `-69.10` and `-68.54 LUFS`.
+- Every observation correctly remained in the silence state at unity gain.
+- Maximum true peak was `-51.12 dBTP`, and limiter reduction remained zero.
+
+This longer probe confirms stable physical-device routing and silence-gate
+behavior on the release candidate. It still does not satisfy the non-silent
+physical-microphone convergence gate because no sustained signal crossed the
+capture silence threshold.

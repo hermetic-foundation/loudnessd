@@ -278,3 +278,16 @@ fn live_filter_registers_an_inactive_node() {
     filter.set_active(true).unwrap();
     filter.set_active(false).unwrap();
 }
+
+#[test]
+#[ignore = "requires a live PipeWire user session"]
+fn live_core_created_filter_retains_its_core_until_destroyed() {
+    let main_loop = pipewire::main_loop::MainLoopRc::new(None).unwrap();
+    let context = pipewire::context::ContextRc::new(&main_loop, None).unwrap();
+    let core = context.connect_rc(None).unwrap();
+    let filter = UnconnectedFilter::new_on_core(&core, "loudnessd-core-lifetime-test").unwrap();
+
+    drop(core);
+    drop(context);
+    drop(filter);
+}

@@ -9,7 +9,7 @@ use std::{
     rc::Rc,
 };
 
-use pipewire::{loop_::Loop, properties::properties, sys};
+use pipewire::{core::CoreRc, loop_::Loop, properties::properties, sys};
 
 mod process;
 
@@ -153,6 +153,7 @@ fn raw_direction(direction: PortDirection) -> pipewire::spa::sys::spa_direction 
 
 pub struct UnconnectedFilter {
     raw: NonNull<sys::pw_filter>,
+    _core: Option<CoreRc>,
     ports: Vec<OwnedPort>,
     callback_data: Box<FilterCallbackData>,
     listener: Option<Box<pipewire::spa::sys::spa_hook>>,
@@ -201,6 +202,7 @@ impl UnconnectedFilter {
         let raw = NonNull::new(raw).ok_or(FilterCreateError::CreationFailed)?;
         Ok(Self {
             raw,
+            _core: None,
             ports: Vec::new(),
             callback_data,
             listener: None,
@@ -243,6 +245,7 @@ impl UnconnectedFilter {
         }
         Ok(Self {
             raw,
+            _core: Some(core.clone()),
             ports: Vec::new(),
             callback_data,
             listener: Some(listener),
@@ -405,6 +408,8 @@ impl Drop for UnconnectedFilter {
         }
         // SAFETY: self uniquely owns raw. PipeWire stops callbacks before
         // returning, and callback_data remains alive until after this method.
+        // Core-created filters retain their CoreRc until all fields are dropped
+        // after this destructor returns.
         unsafe { sys::pw_filter_destroy(self.raw.as_ptr()) };
     }
 }

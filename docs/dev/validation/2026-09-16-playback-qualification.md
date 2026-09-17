@@ -211,6 +211,28 @@ limiter unit test to prove that a loud right channel applies the same reduction
 to a quiet left channel while retaining the true-peak ceiling. Together these
 tests cover live post-filter containment and linked stereo reduction.
 
+## Isolated lifecycle qualification
+
+Candidate `cb67c3adf97e` passed a private-graph lifecycle run while one stereo
+application stream remained alive. The harness verified all of the following:
+
+- `SIGKILL` left the mode-`0600` route journal available to the replacement
+  daemon, which restored both direct channels before normalizing again;
+- runtime disable restored both direct channels, removed managed processing,
+  and cleared the recovery journal;
+- runtime enable resumed healthy normalization;
+- an invalid TOML reload returned an error without changing the active route;
+- restoring valid TOML and reloading resumed healthy normalization;
+- subsequent sink replacement and same-node pause/resume recovered without a
+  daemon restart during the monitored interval; and
+- clean `SIGTERM` shutdown exited successfully with both direct links intact
+  and no filter node or recovery journal remaining.
+
+The 10-second monitored interval retained one active healthy stream in every
+sample, reported zero IPC failures, skipped streams, route failures, callback
+stalls, daemon restarts, PipeWire xruns, and memory growth, and averaged 2.90%
+of one core. The complete application control and target invariants also held.
+
 ## Remaining release evidence
 
 - Complete the eight-hour varied-content soak and measure memory growth from
@@ -220,7 +242,9 @@ tests cover live post-filter containment and linked stereo reduction.
 - Exercise a real browser pause and resume. The synthetic node-command case now
   passes, but feeding zero-valued samples is not equivalent and browser graph
   policy still needs direct integration evidence.
-- Complete the lifecycle and recovery matrix from the release gates.
+- Complete the remaining lifecycle matrix: PipeWire and WirePlumber restart,
+  source-device change and reconnection, application exit during route
+  transitions, and system suspend/resume.
 
 ## Failed extended soak
 

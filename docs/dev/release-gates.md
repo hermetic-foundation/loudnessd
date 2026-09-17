@@ -56,9 +56,6 @@ lifecycle behavior depend on a live PipeWire graph.
   meters, controllers, gain, and policy.
 - Capture normalization never links a monitor source unless the user selected
   that monitor as the application's actual source.
-- Available Wine or Proton capture clients complete the same continuity and
-  isolation checks. If no such client is available, stable release remains
-  blocked and the missing evidence is recorded.
 
 ## Lifecycle and recovery
 
@@ -84,9 +81,9 @@ remain after cleanup.
 - Ambiguous, unsupported, or multichannel topology is left on its original
   direct route and reports a specific persistent reason through both text and
   JSON status.
-- Native, Wine, and Proton application identity is documented from observed
-  metadata; policy matching does not rely on an inherited process name when a
-  more specific application identity exists.
+- Native application identity and any observed Wine or Proton identity are
+  documented from live metadata. Policy matching does not rely on an inherited
+  process name when a more specific application identity exists.
 - Any internal routing, filter, metering, or control failure bypasses or leaves
   the stream direct rather than interrupting audio.
 

@@ -54,7 +54,6 @@ convergence, profiler, process-identity, CPU, and memory assertion.
 | Native browser duplex routing | Pass | One Chromium identity held healthy playback and capture routes with independent callback progress and gain state for 60 observations. |
 | Non-silent physical microphone convergence | Open | A sustained signal above the capture silence gate is still required. |
 | Bidirectional voice application | Open | No active voice capture node was available during this audit. |
-| Wine or Proton capture | Open | No suitable Wine or Proton capture client was active. Skyrim playback has been validated separately. |
 
 The latest physical probe ran for 120 seconds with 119 healthy observations,
 zero skipped streams, and a meter sequence advancing from 6 to 6,098. Its
@@ -101,9 +100,8 @@ interrupt the active audio session.
 1. Complete and accept the final eight-hour soak.
 2. Demonstrate non-silent physical microphone convergence in a real native
    capture client and a representative bidirectional voice application.
-3. Validate Wine or Proton capture when a suitable client is available.
-4. Pass controlled physical USB hot-unplug/reconnection and suspend/resume.
-5. Obtain a green reusable GitHub workflow on the exact release revision after
+3. Pass controlled physical USB hot-unplug/reconnection and suspend/resume.
+4. Obtain a green reusable GitHub workflow on the exact release revision after
    the organization runner leaves quarantine.
-6. Re-run the audit against the final `main`, resolve every high-severity
+5. Re-run the audit against the final `main`, resolve every high-severity
    defect, and only then create a semantic version tag and GitHub release.

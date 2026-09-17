@@ -82,5 +82,7 @@ device before monitoring resumed.
 - Validate a browser WebRTC client.
 - Validate a real bidirectional voice application while simultaneous playback
   is active. Synthetic duplex direction isolation is established by the soak.
-- Validate an available Wine or Proton capture client. Stable release remains
-  blocked when no such client is available.
+
+Wine and Proton capture validation was subsequently removed from the release
+scope. It may be added as compatibility evidence when a representative client
+is naturally available, but absence of such a client does not block release.

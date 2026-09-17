@@ -158,6 +158,9 @@ PipeWire tests or the soak harness against runner hardware.
 
 The current live-suite evidence is recorded in
 [`validation/2026-09-17-live-pipewire-suite.md`](validation/2026-09-17-live-pipewire-suite.md).
+PipeWire disconnect detection, stale-journal rejection, and systemd recovery
+are recorded in
+[`validation/2026-09-17-pipewire-restart.md`](validation/2026-09-17-pipewire-restart.md).
 
 `tests/live/audio-soak.sh` starts a private PipeWire daemon and a policy-only
 WirePlumber instance in a temporary runtime directory. Playback mode drives two

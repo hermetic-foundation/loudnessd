@@ -249,6 +249,65 @@ if [[ $recovered != true ]]; then
   exit 1
 fi
 
+pause_ready=false
+paused_stream_id=
+paused_sequence=
+for _ in {1..50}; do
+  status=$("${private_env[@]}" "$loudnessd" msg status-json 2>/dev/null || true)
+  paused_stream_id=$(jq -r '
+    first(.streams[] | select(.application == "loudnessd.soak.intermittent") | .node_id) // empty
+  ' <<<"$status")
+  if [[ -n $paused_stream_id ]]; then
+    paused_sequence=$(jq -r --argjson node_id "$paused_stream_id" '
+      first(.streams[] | select(
+        .node_id == $node_id and .output_lufs != null
+      ) | .meter_sequence) // empty
+    ' <<<"$status")
+  fi
+  if [[ -n $paused_sequence ]]; then
+    pause_ready=true
+    break
+  fi
+  if ! kill -0 "$daemon_pid" 2>/dev/null; then
+    echo "candidate daemon exited before the pause probe" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+if [[ $pause_ready != true ]]; then
+  save_startup_diagnostics
+  echo "intermittent stream produced no post-filter reading before pause" >&2
+  exit 1
+fi
+
+"${private_env[@]}" pw-cli send-command "$paused_stream_id" Pause '{}' >/dev/null
+sleep 1
+"${private_env[@]}" pw-cli send-command "$paused_stream_id" Start '{}' >/dev/null
+
+resumed=false
+for _ in {1..50}; do
+  status=$("${private_env[@]}" "$loudnessd" msg status-json 2>/dev/null || true)
+  if jq -e --argjson node_id "$paused_stream_id" --argjson sequence "$paused_sequence" '
+    first(.streams[] | select(.node_id == $node_id)) as $stream |
+    $stream.route == "healthy" and
+    $stream.meter_sequence > $sequence and
+    $stream.output_lufs != null
+  ' >/dev/null 2>&1 <<<"$status"; then
+    resumed=true
+    break
+  fi
+  if ! kill -0 "$daemon_pid" 2>/dev/null; then
+    echo "candidate daemon exited while resuming the paused fixture" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+if [[ $resumed != true ]]; then
+  save_startup_diagnostics
+  echo "intermittent stream did not resume normalized processing" >&2
+  exit 1
+fi
+
 "${private_env[@]}" pw-top -b -n 3 >"$baseline_top_output"
 
 node_error() {

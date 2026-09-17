@@ -232,7 +232,7 @@ mod tests {
         SignalDomain,
         pipewire_backend::{PortDirection as GraphPortDirection, track_graph},
         pipewire_filter::{PortDirection, UnconnectedFilter},
-        route_transaction::{bypass, install},
+        route_transaction::{bypass, install, release},
         routing::{LinkEndpoint, plan_route},
     };
 
@@ -244,6 +244,51 @@ mod tests {
                 .iterate(Timeout::Finite(Duration::from_millis(20)));
         }
         assert!(predicate());
+    }
+
+    struct HookedRouteBackend<'a> {
+        inner: PipewireRouteBackend<'a>,
+        after_stage: Option<Box<dyn FnOnce()>>,
+    }
+
+    impl RouteBackend for HookedRouteBackend<'_> {
+        type LinkSet = OwnedLinks;
+        type Error = PipewireRouteError;
+
+        fn create_links(&mut self, specs: &[LinkSpec]) -> Result<Self::LinkSet, Self::Error> {
+            let links = self.inner.create_links(specs)?;
+            if let Some(hook) = self.after_stage.take() {
+                hook();
+            }
+            Ok(links)
+        }
+
+        fn create_direct_links(
+            &mut self,
+            specs: &[LinkSpec],
+        ) -> Result<Self::LinkSet, Self::Error> {
+            self.inner.create_direct_links(specs)
+        }
+
+        fn remove_originals(&mut self, links: &[OriginalLink]) -> Result<(), Self::Error> {
+            self.inner.remove_originals(links)
+        }
+
+        fn restore_originals(&mut self, specs: &[LinkSpec]) -> Result<(), Self::Error> {
+            self.inner.restore_originals(specs)
+        }
+
+        fn set_filter_active(
+            &mut self,
+            filter_node_id: u32,
+            active: bool,
+        ) -> Result<(), Self::Error> {
+            self.inner.set_filter_active(filter_node_id, active)
+        }
+
+        fn destroy_links(&mut self, links: Self::LinkSet) {
+            self.inner.destroy_links(links);
+        }
     }
 
     #[test]
@@ -364,6 +409,143 @@ mod tests {
         });
 
         drop(bypassed);
+        drop(original_owner);
+    }
+
+    #[test]
+    #[ignore = "requires a live PipeWire user session"]
+    fn live_install_cleans_up_when_source_exits_after_staging() {
+        let main_loop = MainLoopRc::new(None).unwrap();
+        let context = pipewire::context::ContextRc::new(&main_loop, None).unwrap();
+        let core = context.connect_rc(None).unwrap();
+        let registry = core.get_registry_rc().unwrap();
+        let (graph, _listener) = track_graph(&registry);
+
+        let mut source =
+            UnconnectedFilter::new_on_core(&core, "loudnessd-route-exit-source").unwrap();
+        source
+            .add_mono_port(PortDirection::Output, "output_FL", "FL")
+            .unwrap();
+        let source = source.connect_inactive().unwrap();
+        let mut destination =
+            UnconnectedFilter::new_on_core(&core, "loudnessd-route-exit-destination").unwrap();
+        destination
+            .add_mono_port(PortDirection::Input, "input_FL", "FL")
+            .unwrap();
+        let destination = destination.connect_inactive().unwrap();
+        let mut normalizer =
+            UnconnectedFilter::new_on_core(&core, "loudnessd-route-exit-normalizer").unwrap();
+        normalizer
+            .add_mono_port(PortDirection::Input, "input_FL", "FL")
+            .unwrap();
+        normalizer
+            .add_mono_port(PortDirection::Output, "output_FL", "FL")
+            .unwrap();
+        let mut normalizer = normalizer.connect_inactive().unwrap();
+
+        pump_until(&main_loop, || {
+            source.node_id().is_some()
+                && destination.node_id().is_some()
+                && normalizer.node_id().is_some()
+        });
+        let source_id = source.node_id().unwrap();
+        let destination_id = destination.node_id().unwrap();
+        let normalizer_id = normalizer.node_id().unwrap();
+        pump_until(&main_loop, || {
+            graph
+                .borrow()
+                .ports()
+                .filter(|port| [source_id, destination_id, normalizer_id].contains(&port.node_id))
+                .count()
+                == 4
+        });
+
+        let port_id = |node_id, direction| {
+            graph
+                .borrow()
+                .ports()
+                .find(|port| port.node_id == node_id && port.direction == direction)
+                .unwrap()
+                .port_id
+        };
+        let original_spec = LinkSpec {
+            output: LinkEndpoint {
+                node_id: source_id,
+                port_id: port_id(source_id, GraphPortDirection::Output),
+            },
+            input: LinkEndpoint {
+                node_id: destination_id,
+                port_id: port_id(destination_id, GraphPortDirection::Input),
+            },
+        };
+        let mut retained = Vec::new();
+        let mut setup_backend = PipewireRouteBackend::new(
+            &main_loop,
+            &core,
+            &registry,
+            Rc::clone(&graph),
+            &mut normalizer,
+            &mut retained,
+        );
+        let original_owner = setup_backend.create_links(&[original_spec]).unwrap();
+        let (ports, links) = {
+            let graph = graph.borrow();
+            (
+                graph.ports().cloned().collect::<Vec<_>>(),
+                graph.links().cloned().collect::<Vec<_>>(),
+            )
+        };
+        let plan = plan_route(
+            SignalDomain::Playback,
+            source_id,
+            normalizer_id,
+            &ports,
+            &links,
+        )
+        .unwrap();
+        let staged_specs = plan.insertion().stage;
+        drop(setup_backend);
+
+        let source_owner = Rc::new(RefCell::new(Some(source)));
+        let hook_owner = Rc::clone(&source_owner);
+        let hook_loop = main_loop.clone();
+        let hook_graph = Rc::clone(&graph);
+        let inner = PipewireRouteBackend::new(
+            &main_loop,
+            &core,
+            &registry,
+            Rc::clone(&graph),
+            &mut normalizer,
+            &mut retained,
+        );
+        let mut backend = HookedRouteBackend {
+            inner,
+            after_stage: Some(Box::new(move || {
+                hook_owner.borrow_mut().take();
+                pump_until(&hook_loop, || {
+                    !hook_graph.borrow().has_node_info(source_id)
+                });
+            })),
+        };
+
+        match install(&mut backend, plan) {
+            Ok(active) => release(&mut backend, active).unwrap(),
+            Err(error) => assert!(matches!(
+                error.operation,
+                crate::route_transaction::TransitionOperation::RemoveOriginal
+                    | crate::route_transaction::TransitionOperation::ActivateFilter
+            )),
+        }
+        pump_until(&main_loop, || {
+            staged_specs.iter().all(|spec| {
+                !graph
+                    .borrow()
+                    .contains_link(spec.output.port_id, spec.input.port_id)
+            })
+        });
+
+        assert!(source_owner.borrow().is_none());
+        assert!(!graph.borrow().has_node_info(source_id));
         drop(original_owner);
     }
 }

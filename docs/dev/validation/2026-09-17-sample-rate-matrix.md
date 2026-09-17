@@ -49,6 +49,31 @@ averaged 3.62%. Both retained two active independent application streams with
 zero shortfalls, skipped streams, unhealthy routes, callback stalls, PipeWire
 errors, or resident-memory growth.
 
+## True-peak limiter matrix
+
+The release package at `/nix/store/1rrb6gx7nyyg3wjvqdwniw4l584abxai-loudnessd-0.1.0`
+was exercised with a deterministic high-crest fixture in mono and stereo at
+four graph rates. Each six-second run required the limiter to engage by more
+than 0.1 dB and the measured post-filter true peak to remain at or below
+`-0.95 dBTP` for a configured `-1 dBTP` ceiling.
+
+| Channels | Graph rate | Maximum reduction | Maximum true peak | Average CPU, one core | RSS growth |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 22,050 Hz | 14.93 dB | -1.095 dBTP | 0.67% | 0 B |
+| 1 | 48,000 Hz | 15.16 dB | -1.100 dBTP | 1.50% | 0 B |
+| 1 | 96,000 Hz | 15.29 dB | -1.100 dBTP | 3.00% | 0 B |
+| 1 | 192,000 Hz | 15.38 dB | -1.098 dBTP | 6.00% | 8 KiB |
+| 2 | 22,050 Hz | 13.68 dB | -1.095 dBTP | 1.33% | 0 B |
+| 2 | 48,000 Hz | 13.66 dB | -1.100 dBTP | 2.67% | 0 B |
+| 2 | 96,000 Hz | 13.68 dB | -1.100 dBTP | 5.33% | 0 B |
+| 2 | 192,000 Hz | 13.68 dB | -1.098 dBTP | 9.00% | 0 B |
+
+All eight runs retained one healthy active route with zero IPC failures,
+daemon restarts, active-stream shortfalls, skipped streams, unhealthy-route
+observations, or stalled callbacks. The results qualify limiter containment
+across the private DSP rate and channel matrix; they do not qualify physical
+hardware at those formats.
+
 ## Hardware scope
 
 Read-only format inspection found that the default USB output advertises a

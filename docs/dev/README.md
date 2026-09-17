@@ -11,7 +11,7 @@ identity is retained for policy and display, but does not collapse multiple
 streams into one gain control. Playback and capture are separate domains, so a
 browser's output and microphone capture cannot modify each other's state.
 
-Playback targets `-13 LUFS`. Capture independently targets `-18 LUFS` and uses
+Playback targets `-16 LUFS`. Capture independently targets `-18 LUFS` and uses
 a slower boost rate. Both domains use silence gates, deadbands, gain limits,
 and asymmetric adjustment rates.
 
@@ -251,9 +251,14 @@ advertisement, 100% YouTube UI volume, and 100% PipeWire stream volume.
 | Second chorus, 108 seconds | -12.9 LUFS | 4.7 LU | -2.6 dBFS |
 | Final chorus, 163 seconds | -13.9 LUFS | 1.1 LU | -1.9 dBFS |
 
-The chorus samples average `-13.1 LUFS`, supporting the generic `-13 LUFS`
-target. A near-silent Chromium auxiliary stream measured `-56.2 LUFS`, so the
-playback silence gate is `-50 LUFS` to avoid boosting utility streams.
+The chorus samples average `-13.1 LUFS`, which originally became the playback
+target. Live use showed that this treated the loudness of an already loud
+master as the desired level for every source: ordinary Helium content around
+`-21 LUFS` received about 7 dB of boost and repeatedly approached the true-peak
+limiter. The generic target was therefore lowered to `-16 LUFS`, preserving
+roughly 3 dB more headroom while still lifting quiet sources. A near-silent
+Chromium auxiliary stream measured `-56.2 LUFS`, so the playback silence gate
+remains `-50 LUFS` to avoid boosting utility streams.
 
 PipeWire's monitor tap is before sink volume. For a linear sink gain `g`, the
 expected digital level after the sink is:
@@ -262,8 +267,8 @@ expected digital level after the sink is:
 effective_lufs = target_lufs + 20 * log10(g)
 ```
 
-| Sink volume | Attenuation | Expected level at -13 LUFS |
+| Sink volume | Attenuation | Expected level at -16 LUFS |
 | --- | ---: | ---: |
-| 10% | -20.00 dB | -33.00 LUFS |
-| 15% | -16.48 dB | -29.48 LUFS |
-| 20% | -13.98 dB | -26.98 LUFS |
+| 10% | -20.00 dB | -36.00 LUFS |
+| 15% | -16.48 dB | -32.48 LUFS |
+| 20% | -13.98 dB | -29.98 LUFS |

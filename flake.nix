@@ -33,6 +33,15 @@
         let
           pkgs = import nixpkgs { inherit system; };
           loudnessd = self.packages.${system}.default;
+          cargoDenySource = nixpkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = nixpkgs.lib.fileset.unions [
+              ./Cargo.lock
+              ./Cargo.toml
+              ./deny.toml
+              ./src
+            ];
+          };
           moduleConfiguration = nixpkgs.lib.nixosSystem {
             inherit system;
             modules = [
@@ -109,6 +118,21 @@
             buildPhase = ''
               runHook preBuild
               cargo clippy -j "''${NIX_BUILD_CORES:-1}" --offline --all-targets -- -D warnings
+              runHook postBuild
+            '';
+            doCheck = false;
+            installPhase = ''
+              touch "$out"
+            '';
+            postInstall = "";
+          });
+          cargo-deny = loudnessd.overrideAttrs (old: {
+            pname = "loudnessd-cargo-deny-check";
+            src = cargoDenySource;
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.cargo-deny ];
+            buildPhase = ''
+              runHook preBuild
+              cargo deny check licenses bans sources
               runHook postBuild
             '';
             doCheck = false;

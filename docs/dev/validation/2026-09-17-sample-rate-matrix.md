@@ -1,6 +1,6 @@
 # Sample-rate matrix
 
-Candidate `c26fcc6a64b4` was exercised on 2026-09-17 with private PipeWire
+Candidate `286dde87670b` was exercised on 2026-09-17 with private PipeWire
 graphs pinned to each tested rate. `pw-top` confirmed that the sink and fixture
 clients used the requested graph clock instead of being resampled through a
 48 kHz graph.
@@ -41,6 +41,14 @@ capture streams and controllers.
 | 48,000 Hz | 8 | 5.75% | 0 B |
 | 96,000 Hz | 8 | 9.00% | 0 B |
 
+## Mono routes
+
+At 48 kHz, the same fault and invariant sequence passed with mono graph nodes.
+The playback run averaged 2.87% of one core and the duplex playback/capture run
+averaged 3.62%. Both retained two active independent application streams with
+zero shortfalls, skipped streams, unhealthy routes, callback stalls, PipeWire
+errors, or resident-memory growth.
+
 ## Hardware scope
 
 Read-only format inspection found that the default USB output advertises a
@@ -49,6 +57,6 @@ range. These tests did not change the active desktop graph or hardware clock.
 They qualify the private stereo DSP paths at those rates, not physical-device
 continuity.
 
-Mono playback and capture, and physical-device tests at every advertised rate,
-remain release requirements. The hardware tests must be scheduled when changing
-the desktop graph cannot interrupt an active audio session.
+Physical-device tests at every advertised rate remain a release requirement.
+Those tests must be scheduled when changing the desktop graph cannot interrupt
+an active audio session.

@@ -29,6 +29,7 @@ client_config_dir=$test_runtime/config-home/pipewire/client.conf.d
 server_log=$output.pipewire-server.log
 wireplumber_log=$output.wireplumber.log
 top_output=$output.pipewire-top.txt
+baseline_top_output=$output.pipewire-top-baseline.txt
 private_env=(env
   PIPEWIRE_RUNTIME_DIR="$test_runtime"
   XDG_RUNTIME_DIR="$test_runtime"
@@ -248,6 +249,29 @@ if [[ $recovered != true ]]; then
   exit 1
 fi
 
+"${private_env[@]}" pw-top -b -n 3 >"$baseline_top_output"
+
+node_error() {
+  local node_id=$1
+  local snapshot=$2
+  awk -v node_id="$node_id" '
+    $2 == node_id { found = 1; errors = $9 }
+    END {
+      if (!found) exit 1
+      print errors
+    }
+  ' "$snapshot"
+}
+
+mapfile -t filter_ids < <(awk '
+  $2 ~ /^[0-9]+$/ && $NF == "loudnessd" { ids[$2] = 1 }
+  END { for (node_id in ids) print node_id }
+' "$baseline_top_output")
+if (( ${#filter_ids[@]} != 2 )); then
+  echo "isolated loudnessd filters are missing after route recovery" >&2
+  exit 1
+fi
+
 monitor_status=0
 "${private_env[@]}" "$loudnessd" monitor \
   --duration "$duration" \
@@ -256,31 +280,18 @@ monitor_status=0
   --output "$output" || monitor_status=$?
 
 "${private_env[@]}" pw-top -b -n 3 >"$top_output"
-for node_id in "${fixture_ids[@]}"; do
-  if ! awk -v node_id="$node_id" '
-    $2 == node_id { found = 1; failed = ($9 != 0) }
-    END { exit !found || failed }
-  ' "$top_output"; then
-    echo "isolated soak stream $node_id is missing or accumulated PipeWire errors" >&2
+for node_id in "${fixture_ids[@]}" "${filter_ids[@]}"; do
+  baseline_error=$(node_error "$node_id" "$baseline_top_output" || true)
+  final_error=$(node_error "$node_id" "$top_output" || true)
+  if [[ -z $baseline_error || -z $final_error ]]; then
+    echo "isolated soak node $node_id disappeared" >&2
+    exit 1
+  fi
+  if (( final_error != baseline_error )); then
+    echo "isolated soak node $node_id accumulated PipeWire errors during monitoring" >&2
     exit 1
   fi
 done
-if ! awk '
-  $2 ~ /^[0-9]+$/ && $NF == "loudnessd" {
-    seen[$2] = 1
-    errors[$2] = $9
-  }
-  END {
-    for (node_id in seen) {
-      count++
-      failed = failed || errors[node_id] != 0
-    }
-    exit count != 2 || failed
-  }
-' "$top_output"; then
-  echo "isolated loudnessd filters are missing or accumulated PipeWire errors" >&2
-  exit 1
-fi
 if grep -q '^\[E\]' "$server_log" "$wireplumber_log"; then
   echo "isolated PipeWire services logged an error" >&2
   exit 1

@@ -522,9 +522,7 @@ mod tests {
             inner,
             after_stage: Some(Box::new(move || {
                 hook_owner.borrow_mut().take();
-                pump_until(&hook_loop, || {
-                    !hook_graph.borrow().has_node_info(source_id)
-                });
+                pump_until(&hook_loop, || !hook_graph.borrow().has_node_info(source_id));
             })),
         };
 

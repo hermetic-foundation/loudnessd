@@ -42,9 +42,7 @@ impl ControllerConfigOverride {
                 .silence_gate_lufs
                 .unwrap_or(inherited.silence_gate_lufs),
             deadband_lu: self.deadband_lu.unwrap_or(inherited.deadband_lu),
-            maximum_boost_db: self
-                .maximum_boost_db
-                .unwrap_or(inherited.maximum_boost_db),
+            maximum_boost_db: self.maximum_boost_db.unwrap_or(inherited.maximum_boost_db),
             maximum_cut_db: self.maximum_cut_db.unwrap_or(inherited.maximum_cut_db),
             boost_rate_db_per_second: self
                 .boost_rate_db_per_second
@@ -195,9 +193,7 @@ impl UserConfig {
         toml::from_str(source)
     }
 
-    pub fn controller_configs(
-        &self,
-    ) -> Result<(ControllerConfig, ControllerConfig), &'static str> {
+    pub fn controller_configs(&self) -> Result<(ControllerConfig, ControllerConfig), &'static str> {
         Ok((
             self.playback.resolve(ControllerConfig::default())?,
             self.capture.resolve(ControllerConfig::capture_default())?,

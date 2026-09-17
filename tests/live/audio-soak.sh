@@ -385,49 +385,46 @@ fi
 
 generate_first_stream() {
   local output_file=$1
-  local generated=0
-  : >"$output_file"
-  while (( generated < duration + 60 )); do
-    {
-      "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
-        synth 45 sine 220 sine 330 vol 0.035
-      "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
-        synth 15 sine 220 sine 330 vol 0.003
-    } >>"$output_file"
-    generated=$((generated + 60))
-  done
+  {
+    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+      synth 45 sine 220 sine 330 vol 0.035
+    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+      synth 15 sine 220 sine 330 vol 0.003
+  } >"$output_file"
 }
 
 generate_second_stream() {
   local output_file=$1
-  local generated=0
-  : >"$output_file"
-  while (( generated < duration + 60 )); do
-    {
-      "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
-        synth 30 pinknoise vol 0.12
-      "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
-        synth 10 sine 550 sine 770 vol 0
-      "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
-        synth 20 sine 550 sine 770 vol 0.08
-    } >>"$output_file"
-    generated=$((generated + 60))
-  done
+  {
+    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+      synth 30 pinknoise vol 0.12
+    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+      synth 10 sine 550 sine 770 vol 0
+    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+      synth 20 sine 550 sine 770 vol 0.08
+  } >"$output_file"
 }
 
 generate_limiter_stream() {
   local output_file=$1
-  local generated=0
-  : >"$output_file"
-  while (( generated < duration + 60 )); do
-    {
-      "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
-        synth 0.998 sine 220 sine 330 vol 0.02
-      "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
-        synth 0.002 sine 997 sine 997 vol 0.95
-    } >>"$output_file"
-    generated=$((generated + 1))
-  done
+  {
+    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+      synth 0.998 sine 220 sine 330 vol 0.02
+    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+      synth 0.002 sine 997 sine 997 vol 0.95
+  } >"$output_file"
+}
+
+repeat_fixture() {
+  local input_file=$1
+  local cycle_seconds=$2
+  local total_seconds=$((duration + 60))
+  local cycles=$(((total_seconds + cycle_seconds - 1) / cycle_seconds))
+  local repeats=$((cycles - 1))
+  "$sox" -q \
+    -t raw -e floating-point -b 32 -L -r 48000 -c 2 "$input_file" \
+    -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+    repeat "$repeats"
 }
 
 if [[ $mode == playback ]]; then
@@ -436,12 +433,12 @@ if [[ $mode == playback ]]; then
   generate_first_stream "$first_fixture"
   generate_second_stream "$second_fixture"
 
-  cat "$first_fixture" | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+  repeat_fixture "$first_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
     --rate 48000 --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.continuous application.name=Loudnessd-Soak-Continuous' - &
   stream_pids+=("$!")
 
-  cat "$second_fixture" | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+  repeat_fixture "$second_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
     --rate 48000 --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.intermittent application.name=Loudnessd-Soak-Intermittent' - &
   stream_pids+=("$!")
@@ -449,7 +446,7 @@ elif [[ $mode == capture ]]; then
   second_fixture=$test_runtime/second-stream.raw
   generate_second_stream "$second_fixture"
 
-  cat "$second_fixture" | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+  repeat_fixture "$second_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
     --rate 48000 --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.duplex application.name=Loudnessd-Soak-Duplex' - &
   stream_pids+=("$!")
@@ -469,7 +466,7 @@ elif [[ $mode == lifecycle ]]; then
   lifecycle_fixture=$test_runtime/lifecycle-stream.raw
   generate_first_stream "$lifecycle_fixture"
 
-  cat "$lifecycle_fixture" | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+  repeat_fixture "$lifecycle_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
     --rate 48000 --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.lifecycle application.name=Loudnessd-Soak-Lifecycle' - &
   stream_pids+=("$!")
@@ -477,7 +474,7 @@ elif [[ $mode == limiter ]]; then
   limiter_fixture=$test_runtime/limiter-stream.raw
   generate_limiter_stream "$limiter_fixture"
 
-  cat "$limiter_fixture" | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+  repeat_fixture "$limiter_fixture" 1 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
     --rate 48000 --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.limiter application.name=Loudnessd-Soak-Limiter' - &
   stream_pids+=("$!")
@@ -486,7 +483,7 @@ else
   generate_second_stream "$second_fixture"
 
   for index in {0..7}; do
-    cat "$second_fixture" | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+    repeat_fixture "$second_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
       --rate 48000 --channels 2 --channel-map Stereo --format f32 \
       --properties="application.id=loudnessd.soak.memory.$index application.name=Loudnessd-Soak-Memory-$index" - &
     stream_pids+=("$!")

@@ -50,13 +50,22 @@ fn stream_status(
     controllers: &ControllerBank,
     graph: &GraphState,
 ) -> StreamStatus {
-    let (lifecycle, route, control) = match managed {
-        ManagedStream::Connecting { control, .. } => (
+    let (filter_node_id, lifecycle, route, control) = match managed {
+        ManagedStream::Connecting {
+            filter, control, ..
+        } => (
+            filter.node_id(),
             StreamLifecycle::Connecting,
             RouteStatus::Connecting,
             control,
         ),
-        ManagedStream::Active { control, route, .. } => (
+        ManagedStream::Active {
+            filter,
+            control,
+            route,
+            ..
+        } => (
+            filter.node_id(),
             StreamLifecycle::Active,
             route_status(route_health(route.plan(), graph)),
             control,
@@ -71,6 +80,7 @@ fn stream_status(
 
     StreamStatus {
         node_id,
+        filter_node_id,
         domain: domain_name(control.domain()).to_owned(),
         application: control.application_id().to_owned(),
         meter_sequence: meter.map(|meter| meter.sequence),

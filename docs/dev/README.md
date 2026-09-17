@@ -169,6 +169,8 @@ Concurrent application exit during ordered bypass is recorded in
 [`validation/2026-09-17-bypass-exit.md`](validation/2026-09-17-bypass-exit.md).
 The revised playback target and real browser WebRTC capture probe are recorded
 in [`validation/2026-09-17-target16-webrtc.md`](validation/2026-09-17-target16-webrtc.md).
+The bounded playback gain-path qualification is recorded in
+[`validation/2026-09-17-gain-path-qualification.md`](validation/2026-09-17-gain-path-qualification.md).
 
 `tests/live/audio-soak.sh` starts a private PipeWire daemon and a policy-only
 WirePlumber instance in a temporary runtime directory. Playback mode drives two
@@ -177,11 +179,10 @@ uses one application identity with simultaneous playback and capture streams;
 lifecycle mode exercises process and configuration recovery; limiter mode
 drives deterministic low-average, high-crest material; memory mode drives eight
 independent stereo playback applications.
-Hardware monitors are not loaded. Private clients disable realtime scheduling
-so an unpaced synthetic graph cannot trip the kernel realtime watchdog;
-real-graph integration covers production scheduling separately. The candidate
-daemon, IPC socket, graph, fixtures, and recovery journal therefore cannot
-observe or modify desktop applications or hardware.
+Hardware monitors are not loaded. The private graph retains normal PipeWire
+scheduling so callback timing represents the production daemon while its
+runtime directory, daemon, IPC socket, fixtures, and recovery journal remain
+isolated from desktop applications and hardware.
 
 Before monitoring, the harness assigns distinct non-default fixture volumes,
 snapshots each stream's complete PipeWire `Props` control state, and destroys

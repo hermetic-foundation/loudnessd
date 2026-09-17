@@ -154,7 +154,8 @@ loudnessd monitor --duration 3600 --interval 1000 --expect-active 2 \
 The final JSON summary reports IPC failures, unhealthy routes, stalled callback
 sequences, daemon restarts, active-stream shortfalls, in-progress slew
 observations, skipped-stream observations, convergence within 1.5 LU after the
-controller settles, maximum limiter reduction, and maximum observed post-filter
+measured output settles, minimum and maximum applied gain, boost and cut
+observation counts, maximum limiter reduction, and maximum observed post-filter
 true peak. It also records expected, minimum, and maximum active stream counts,
 the maximum simultaneous skipped stream count, initial, final, and peak resident
 memory, memory growth, and average daemon CPU use. CPU accounting remains valid

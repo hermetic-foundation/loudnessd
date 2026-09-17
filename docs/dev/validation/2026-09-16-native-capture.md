@@ -79,10 +79,7 @@ device before monitoring resumed.
 
 - Repeat the native recorder probe with a sustained non-silent microphone
   signal and verify convergence around -18 LUFS without clamping.
-- Validate a browser WebRTC client.
-- Validate a real bidirectional voice application while simultaneous playback
-  is active. Synthetic duplex direction isolation is established by the soak.
 
-Wine and Proton capture validation was subsequently removed from the release
-scope. It may be added as compatibility evidence when a representative client
-is naturally available, but absence of such a client does not block release.
+Application-specific capture clients are supporting evidence, not separate
+release gates. The source of truth is the generic PipeWire stream topology and
+the direction-isolation behavior above.

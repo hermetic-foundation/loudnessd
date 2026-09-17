@@ -240,10 +240,9 @@ The deployed systemd user service also restarted cleanly during NixOS activation
 without restarting PipeWire or the compositor.
 
 Before a stable release, validation still needs subjective sustained listening
-across varied content and non-silent native capture coverage. Wine playback has
-been validated with Skyrim. Wine and Proton capture are outside the release
-gate and may be validated later when a representative client is naturally
-available.
+across varied content and non-silent hardware-backed capture coverage. Named
+applications in the validation records are examples of PipeWire stream
+behavior, not application-specific release targets.
 
 ## Playback calibration
 

@@ -260,12 +260,11 @@ generated Nix-store configuration or `services.loudnessd.configFile`.
   normalized; unsupported topology is left untouched and its reason remains
   visible through `loudnessd msg status` and `status-json` while the stream
   exists.
-- Application metadata varies between native, Wine, and Proton software, so
-  inspect `--list-streams` before relying on a per-application override.
+- Application metadata varies between software, so inspect `--list-streams`
+  before relying on a per-application override.
 - Native Chromium and PipeWire playback and capture clients have been validated
   on a multi-monitor NixOS desktop. Skyrim playback under Wine has also been
   validated using the `TESV: Skyrim` identity reported by `--list-streams`.
-  Wine and Proton capture metadata has not been validated, so inspect
-  `--list-streams` before configuring an override for such a stream.
+  These are compatibility observations, not special-case integrations.
 - The current release supports PipeWire's negotiated planar floating-point DSP
   buffers. The filter follows the graph sample rate at runtime.

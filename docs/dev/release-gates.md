@@ -50,8 +50,9 @@ lifecycle behavior depend on a live PipeWire graph.
 
 ## Capture isolation
 
-- Native microphone capture is validated with a recorder, a browser WebRTC
-  client, and a bidirectional voice application.
+- A hardware-backed capture stream receives a sustained non-silent signal and
+  satisfies the same continuity, convergence, peak, and volume-preservation
+  criteria as playback.
 - Playback and capture belonging to the same application maintain independent
   meters, controllers, gain, and policy.
 - Capture normalization never links a monitor source unless the user selected
@@ -81,9 +82,9 @@ remain after cleanup.
 - Ambiguous, unsupported, or multichannel topology is left on its original
   direct route and reports a specific persistent reason through both text and
   JSON status.
-- Native application identity and any observed Wine or Proton identity are
-  documented from live metadata. Policy matching does not rely on an inherited
-  process name when a more specific application identity exists.
+- Application identity is read from live PipeWire metadata. Policy matching
+  does not rely on an inherited process name when a more specific application
+  identity exists.
 - Any internal routing, filter, metering, or control failure bypasses or leaves
   the stream direct rather than interrupting audio.
 

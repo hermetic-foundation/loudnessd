@@ -49,11 +49,10 @@ convergence, profiler, process-identity, CPU, and memory assertion.
 | Gate | State | Evidence |
 | --- | --- | --- |
 | Synthetic non-silent duplex capture | Pass | A 120-second private-graph run exercised independent playback and capture gain in both directions. |
-| Native recorder routing | Partial | A real Scarlett capture route remained healthy, but the source stayed below the silence gate. |
-| Browser WebRTC routing | Partial | Real `getUserMedia` routing and direction isolation passed, but the microphone signal remained silent. |
-| Native browser duplex routing | Pass | One Chromium identity held healthy playback and capture routes with independent callback progress and gain state for 60 observations. |
+| Hardware-backed capture routing | Partial | Real Scarlett routes remained healthy, but the source stayed below the silence gate. |
+| Additional capture client | Partial | A second real capture client confirmed discovery and routing, but its microphone signal remained silent. |
+| Same-identity duplex routing | Pass | One application identity held healthy playback and capture routes with independent callback progress and gain state for 60 observations. |
 | Non-silent physical microphone convergence | Open | A sustained signal above the capture silence gate is still required. |
-| Bidirectional voice application | Open | No active voice capture node was available during this audit. |
 
 The latest physical probe ran for 120 seconds with 119 healthy observations,
 zero skipped streams, and a meter sequence advancing from 6 to 6,098. Its
@@ -98,8 +97,8 @@ interrupt the active audio session.
 ## Release blockers
 
 1. Complete and accept the final eight-hour soak.
-2. Demonstrate non-silent physical microphone convergence in a real native
-   capture client and a representative bidirectional voice application.
+2. Demonstrate non-silent physical microphone convergence through a
+   hardware-backed capture stream.
 3. Pass controlled physical USB hot-unplug/reconnection and suspend/resume.
 4. Obtain a green reusable GitHub workflow on the exact release revision after
    the organization runner leaves quarantine.

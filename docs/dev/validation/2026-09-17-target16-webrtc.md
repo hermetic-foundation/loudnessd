@@ -101,6 +101,6 @@ created real callbacks without becoming audible.
 - The temporary browser profile, localhost server, playback and capture
   streams, and all temporary files were removed afterward.
 
-This establishes simultaneous native-browser playback/capture discovery,
-routing, callback progress, and direction isolation. It does not replace a
-non-silent bidirectional voice-call test.
+This establishes simultaneous playback/capture discovery, routing, callback
+progress, and direction isolation for a real application. It does not establish
+non-silent hardware-backed capture convergence.

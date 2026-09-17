@@ -40,6 +40,7 @@ use discovery::{ChannelReadiness, ChannelSettler, channel_readiness};
 
 const CONTROL_INTERVAL: Duration = Duration::from_millis(100);
 const TOPOLOGY_SETTLE_INTERVAL: Duration = Duration::from_millis(500);
+const TOPOLOGY_SKIP_INTERVAL: Duration = Duration::from_secs(5);
 const PIPEWIRE_SAMPLE_RATE: u32 = 48_000;
 
 enum ManagedStream {
@@ -301,16 +302,21 @@ impl Daemon {
                 .policy_for(&application_id)
                 .enables(stream.domain)
             {
+                if !self.graph.borrow().has_node_info(stream.node_id) {
+                    continue;
+                }
                 self.skip_stream(&stream, "disabled by policy");
                 continue;
             }
             let readiness = channel_readiness(&stream, &self.graph.borrow());
-            let readiness = self.channel_settler.observe(
-                stream.node_id,
-                readiness,
-                Instant::now(),
-                TOPOLOGY_SETTLE_INTERVAL,
-            );
+            let settle_for = if matches!(readiness, ChannelReadiness::Skipped(_)) {
+                TOPOLOGY_SKIP_INTERVAL
+            } else {
+                TOPOLOGY_SETTLE_INTERVAL
+            };
+            let readiness =
+                self.channel_settler
+                    .observe(stream.node_id, readiness, Instant::now(), settle_for);
             let channels = match readiness {
                 ChannelReadiness::Pending => continue,
                 ChannelReadiness::Ready(channels) => channels,

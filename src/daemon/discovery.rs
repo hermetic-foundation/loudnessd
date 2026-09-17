@@ -19,7 +19,7 @@ pub(super) enum ChannelReadiness {
 
 #[derive(Clone, Debug)]
 struct Candidate {
-    channels: Vec<String>,
+    readiness: ChannelReadiness,
     stable_since: Instant,
 }
 
@@ -36,25 +36,25 @@ impl ChannelSettler {
         now: Instant,
         settle_for: Duration,
     ) -> ChannelReadiness {
-        let ChannelReadiness::Ready(channels) = readiness else {
+        if readiness == ChannelReadiness::Pending {
             self.candidates.remove(&node_id);
-            return readiness;
-        };
+            return ChannelReadiness::Pending;
+        }
 
         match self.candidates.get(&node_id) {
             Some(candidate)
-                if candidate.channels == channels
+                if candidate.readiness == readiness
                     && now.saturating_duration_since(candidate.stable_since) >= settle_for =>
             {
                 self.candidates.remove(&node_id);
-                ChannelReadiness::Ready(channels)
+                readiness
             }
-            Some(candidate) if candidate.channels == channels => ChannelReadiness::Pending,
+            Some(candidate) if candidate.readiness == readiness => ChannelReadiness::Pending,
             _ => {
                 self.candidates.insert(
                     node_id,
                     Candidate {
-                        channels,
+                        readiness,
                         stable_since: now,
                     },
                 );
@@ -330,6 +330,51 @@ mod tests {
                 settle_for,
             ),
             ChannelReadiness::Ready(vec!["FL".to_owned()])
+        );
+    }
+
+    #[test]
+    fn requires_a_stable_failure_before_skipping() {
+        let started = Instant::now();
+        let settle_for = Duration::from_millis(500);
+        let reason = "stream port 11 has 2 routes; exactly one is required".to_owned();
+        let mut settler = ChannelSettler::default();
+
+        assert_eq!(
+            settler.observe(
+                10,
+                ChannelReadiness::Skipped(reason.clone()),
+                started,
+                settle_for,
+            ),
+            ChannelReadiness::Pending
+        );
+        assert_eq!(
+            settler.observe(
+                10,
+                ChannelReadiness::Ready(vec!["FL".to_owned()]),
+                started + Duration::from_millis(250),
+                settle_for,
+            ),
+            ChannelReadiness::Pending
+        );
+        assert_eq!(
+            settler.observe(
+                10,
+                ChannelReadiness::Skipped(reason.clone()),
+                started + Duration::from_millis(500),
+                settle_for,
+            ),
+            ChannelReadiness::Pending
+        );
+        assert_eq!(
+            settler.observe(
+                10,
+                ChannelReadiness::Skipped(reason.clone()),
+                started + Duration::from_millis(1_000),
+                settle_for,
+            ),
+            ChannelReadiness::Skipped(reason)
         );
     }
 }

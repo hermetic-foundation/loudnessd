@@ -56,6 +56,10 @@ pub struct SoakReport {
     pub convergence_eligible_observations: u64,
     pub convergence_passing_observations: u64,
     pub convergence_ratio: Option<f64>,
+    pub minimum_gain_db: Option<f32>,
+    pub maximum_gain_db: Option<f32>,
+    pub boost_observations: u64,
+    pub cut_observations: u64,
     pub maximum_limiter_reduction_db: f32,
     pub maximum_output_true_peak_dbtp: Option<f32>,
     pub initial_rss_bytes: Option<u64>,
@@ -180,6 +184,30 @@ impl SoakAccumulator {
                         .maximum_output_true_peak_dbtp
                         .map_or(output_peak_dbtp, |maximum| maximum.max(output_peak_dbtp)),
                 );
+            }
+
+            let carrying_signal = stream.lifecycle == StreamLifecycle::Active
+                && stream.route == RouteStatus::Healthy
+                && !matches!(
+                    stream.control,
+                    ControlStatus::Waiting | ControlStatus::Silence | ControlStatus::Bypass
+                );
+            if carrying_signal {
+                self.report.minimum_gain_db = Some(
+                    self.report
+                        .minimum_gain_db
+                        .map_or(stream.gain_db, |minimum| minimum.min(stream.gain_db)),
+                );
+                self.report.maximum_gain_db = Some(
+                    self.report
+                        .maximum_gain_db
+                        .map_or(stream.gain_db, |maximum| maximum.max(stream.gain_db)),
+                );
+                if stream.gain_db > 0.01 {
+                    self.report.boost_observations += 1;
+                } else if stream.gain_db < -0.01 {
+                    self.report.cut_observations += 1;
+                }
             }
 
             let eligible = stream.lifecycle == StreamLifecycle::Active
@@ -333,6 +361,10 @@ mod tests {
         assert_eq!(report.convergence_eligible_observations, 3);
         assert_eq!(report.convergence_passing_observations, 2);
         assert_eq!(report.convergence_ratio, Some(2.0 / 3.0));
+        assert_eq!(report.minimum_gain_db, Some(7.0));
+        assert_eq!(report.maximum_gain_db, Some(7.0));
+        assert_eq!(report.boost_observations, 3);
+        assert_eq!(report.cut_observations, 0);
         assert_eq!(report.maximum_limiter_reduction_db, 0.4);
         assert_eq!(report.maximum_output_true_peak_dbtp, Some(-1.0));
         assert_eq!(report.initial_rss_bytes, Some(2_001_000));
@@ -431,5 +463,28 @@ mod tests {
         assert_eq!(report.convergence_eligible_observations, 0);
         assert_eq!(report.convergence_ratio, None);
         assert_eq!(report.stalled_callback_observations, 0);
+    }
+
+    #[test]
+    fn reports_gain_path_coverage_only_while_carrying_signal() {
+        let mut accumulator = SoakAccumulator::default();
+        let mut boosted = status(1, -13.0);
+        boosted.streams[0].gain_db = 4.0;
+        accumulator.observe(&boosted);
+
+        let mut cut = status(2, -13.0);
+        cut.streams[0].gain_db = -3.0;
+        accumulator.observe(&cut);
+
+        let mut silent = status(3, -13.0);
+        silent.streams[0].control = ControlStatus::Silence;
+        silent.streams[0].gain_db = -9.0;
+        accumulator.observe(&silent);
+
+        let report = accumulator.finish(Duration::from_secs(3));
+        assert_eq!(report.minimum_gain_db, Some(-3.0));
+        assert_eq!(report.maximum_gain_db, Some(4.0));
+        assert_eq!(report.boost_observations, 1);
+        assert_eq!(report.cut_observations, 1);
     }
 }

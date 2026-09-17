@@ -165,6 +165,8 @@ Private playback and duplex-capture graph-rate results are recorded in
 [`validation/2026-09-17-sample-rate-matrix.md`](validation/2026-09-17-sample-rate-matrix.md).
 A real Chromium Web Audio pause/resume result is recorded in
 [`validation/2026-09-17-browser-pause.md`](validation/2026-09-17-browser-pause.md).
+Concurrent application exit during ordered bypass is recorded in
+[`validation/2026-09-17-bypass-exit.md`](validation/2026-09-17-bypass-exit.md).
 
 `tests/live/audio-soak.sh` starts a private PipeWire daemon and a policy-only
 WirePlumber instance in a temporary runtime directory. Playback mode drives two

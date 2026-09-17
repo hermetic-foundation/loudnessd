@@ -18,7 +18,7 @@ pub struct ControllerConfig {
 impl Default for ControllerConfig {
     fn default() -> Self {
         Self {
-            target_lufs: -13.0,
+            target_lufs: -16.0,
             silence_gate_lufs: -50.0,
             deadband_lu: 0.75,
             maximum_boost_db: 18.0,
@@ -384,7 +384,7 @@ mod tests {
             controller.observe(
                 "music",
                 Observation {
-                    lufs: -13.5,
+                    lufs: -16.5,
                     elapsed_seconds: 1.0
                 }
             ),
@@ -448,7 +448,7 @@ mod tests {
                 },
             );
         }
-        assert_eq!(controller.stream("source").unwrap().gain_db, 7.0);
+        assert_eq!(controller.stream("source").unwrap().gain_db, 4.0);
         assert_eq!(
             controller.observe(
                 "source",
@@ -457,8 +457,14 @@ mod tests {
                     elapsed_seconds: 1.0,
                 }
             ),
-            Decision::Hold { gain_db: 7.0 }
+            Decision::Hold { gain_db: 4.0 }
         );
+    }
+
+    #[test]
+    fn directional_defaults_use_conservative_independent_targets() {
+        assert_eq!(ControllerConfig::default().target_lufs, -16.0);
+        assert_eq!(ControllerConfig::capture_default().target_lufs, -18.0);
     }
 
     #[test]

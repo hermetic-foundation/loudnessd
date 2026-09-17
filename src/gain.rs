@@ -376,7 +376,25 @@ mod tests {
         let input: Vec<_> = (0..48_000)
             .map(|index| [0.1, waveform[index % waveform.len()]])
             .collect();
-        let (output_peak, reduction) = process_and_measure_peak(&mut limiter, &input);
+        let latency = limiter.latency_frames();
+        let mut output_detector = TruePeakDetector::new(2).unwrap();
+        let mut output_peak = 0.0_f32;
+        let mut reduction = 0.0_f32;
+        let mut linked_reduction_observed = false;
+        for frame in input
+            .iter()
+            .copied()
+            .chain(std::iter::repeat_n([0.0; 2], latency))
+        {
+            let mut limited = [0.0; 2];
+            let gain = limiter.process_frame(&frame, &mut limited).unwrap();
+            reduction = reduction.max(-20.0 * gain.log10());
+            output_peak = output_peak.max(output_detector.push_frame(&limited).unwrap());
+            if gain < 0.99 && limited[0] != 0.0 {
+                assert!((limited[0].abs() - 0.1 * gain).abs() < 0.0001);
+                linked_reduction_observed = true;
+            }
+        }
         let threshold = 10.0_f32.powf(-1.0 / 20.0);
 
         assert!(
@@ -384,6 +402,7 @@ mod tests {
             "output peak was {output_peak}"
         );
         assert!(reduction > 0.0);
+        assert!(linked_reduction_observed);
     }
 
     #[test]

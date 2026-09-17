@@ -77,8 +77,9 @@ device before monitoring resumed.
 
 ## Remaining capture evidence
 
-- Repeat the native recorder probe with a sustained non-silent microphone
-  signal and verify convergence around -18 LUFS without clamping.
+- The required sustained non-silent microphone qualification subsequently
+  passed and is recorded in
+  [`2026-09-17-hardware-capture.md`](2026-09-17-hardware-capture.md).
 
 Application-specific capture clients are supporting evidence, not separate
 release gates. The source of truth is the generic PipeWire stream topology and

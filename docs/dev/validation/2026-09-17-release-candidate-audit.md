@@ -49,15 +49,17 @@ convergence, profiler, process-identity, CPU, and memory assertion.
 | Gate | State | Evidence |
 | --- | --- | --- |
 | Synthetic non-silent duplex capture | Pass | A 120-second private-graph run exercised independent playback and capture gain in both directions. |
-| Hardware-backed capture routing | Partial | Real Scarlett routes remained healthy, but the source stayed below the silence gate. |
+| Hardware-backed capture routing and convergence | Pass | A calibrated real microphone stream remained healthy and passed 220 of 221 eligible settled observations. |
 | Additional capture client | Partial | A second real capture client confirmed discovery and routing, but its microphone signal remained silent. |
 | Same-identity duplex routing | Pass | One application identity held healthy playback and capture routes with independent callback progress and gain state for 60 observations. |
-| Non-silent physical microphone convergence | Open | A sustained signal above the capture silence gate is still required. |
 
 The latest physical probe ran for 120 seconds with 119 healthy observations,
 zero skipped streams, and a meter sequence advancing from 6 to 6,098. Its
 silence-gate result is recorded in
 [`2026-09-17-target16-webrtc.md`](2026-09-17-target16-webrtc.md).
+The subsequent calibrated non-silent qualification passed with 99.55%
+convergence and is recorded in
+[`2026-09-17-hardware-capture.md`](2026-09-17-hardware-capture.md).
 
 ## Lifecycle and recovery
 
@@ -97,10 +99,8 @@ interrupts the active desktop session.
 ## Release blockers
 
 1. Complete and accept the final eight-hour soak.
-2. Demonstrate non-silent physical microphone convergence through a
-   hardware-backed capture stream.
-3. Pass controlled suspend/resume.
-4. Obtain a green reusable GitHub workflow on the exact release revision after
+2. Pass controlled suspend/resume.
+3. Obtain a green reusable GitHub workflow on the exact release revision after
    the organization runner leaves quarantine.
-5. Re-run the audit against the final `main`, resolve every high-severity
+4. Re-run the audit against the final `main`, resolve every high-severity
    defect, and only then create a semantic version tag and GitHub release.

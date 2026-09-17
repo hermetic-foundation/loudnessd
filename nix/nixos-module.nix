@@ -11,11 +11,65 @@ let
   cfg = config.services.loudnessd;
   system = pkgs.stdenv.hostPlatform.system;
   toml = pkgs.formats.toml { };
+  controllerSettings = settings: {
+    target_lufs = settings.targetLufs;
+    silence_gate_lufs = settings.silenceGateLufs;
+    deadband_lu = settings.deadbandLu;
+    maximum_boost_db = settings.maximumBoostDb;
+    maximum_cut_db = settings.maximumCutDb;
+    boost_rate_db_per_second = settings.boostRateDbPerSecond;
+    cut_rate_db_per_second = settings.cutRateDbPerSecond;
+  };
+  controllerOptions = defaults: {
+    targetLufs = lib.mkOption {
+      type = lib.types.float;
+      default = defaults.targetLufs;
+      description = "Perceived-loudness target in LUFS.";
+    };
+
+    silenceGateLufs = lib.mkOption {
+      type = lib.types.float;
+      default = defaults.silenceGateLufs;
+      description = "Signals below this loudness remain at unity gain.";
+    };
+
+    deadbandLu = lib.mkOption {
+      type = lib.types.float;
+      default = defaults.deadbandLu;
+      description = "Allowed deviation from the target before gain changes.";
+    };
+
+    maximumBoostDb = lib.mkOption {
+      type = lib.types.float;
+      default = defaults.maximumBoostDb;
+      description = "Maximum gain loudnessd may add.";
+    };
+
+    maximumCutDb = lib.mkOption {
+      type = lib.types.float;
+      default = defaults.maximumCutDb;
+      description = "Maximum gain loudnessd may remove.";
+    };
+
+    boostRateDbPerSecond = lib.mkOption {
+      type = lib.types.float;
+      default = defaults.boostRateDbPerSecond;
+      description = "Maximum upward gain slew rate.";
+    };
+
+    cutRateDbPerSecond = lib.mkOption {
+      type = lib.types.float;
+      default = defaults.cutRateDbPerSecond;
+      description = "Maximum downward gain slew rate.";
+    };
+  };
   applicationSettings = lib.mapAttrs (
     _: settings: lib.filterAttrs (_: value: value != null) settings
   ) cfg.settings.applications;
   configFile = toml.generate "loudnessd.toml" {
     defaults = cfg.settings.defaults;
+    playback = controllerSettings cfg.settings.playback;
+    capture = controllerSettings cfg.settings.capture;
     applications = applicationSettings;
   };
   effectiveConfigFile = if cfg.configFile == null then configFile else cfg.configFile;
@@ -54,6 +108,26 @@ in
           default = true;
           description = "Whether capture normalization is enabled by default.";
         };
+      };
+
+      playback = controllerOptions {
+        targetLufs = -16.0;
+        silenceGateLufs = -50.0;
+        deadbandLu = 0.75;
+        maximumBoostDb = 18.0;
+        maximumCutDb = 24.0;
+        boostRateDbPerSecond = 1.0;
+        cutRateDbPerSecond = 3.0;
+      };
+
+      capture = controllerOptions {
+        targetLufs = -18.0;
+        silenceGateLufs = -55.0;
+        deadbandLu = 1.0;
+        maximumBoostDb = 12.0;
+        maximumCutDb = 18.0;
+        boostRateDbPerSecond = 0.5;
+        cutRateDbPerSecond = 3.0;
       };
 
       applications = lib.mkOption {

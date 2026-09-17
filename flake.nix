@@ -40,6 +40,7 @@
               {
                 services.loudnessd = {
                   enable = true;
+                  settings.playback.targetLufs = -17.0;
                   settings.applications.browser.capture = false;
                 };
               }
@@ -120,6 +121,11 @@
                 grep -Fq '[defaults]' "$generatedConfig"
                 grep -Fq 'playback = true' "$generatedConfig"
                 grep -Fq 'capture = false' "$generatedConfig"
+                grep -Fq '[playback]' "$generatedConfig"
+                grep -Fq 'target_lufs = -17.0' "$generatedConfig"
+                grep -Fq 'maximum_boost_db = 18.0' "$generatedConfig"
+                grep -Fq '[capture]' "$generatedConfig"
+                grep -Fq 'target_lufs = -18.0' "$generatedConfig"
                 externalConfig="''${externalExecStart##*--config }"
                 grep -Fq 'playback = false' "$externalConfig"
                 grep -Fq 'capture = true' "$externalConfig"

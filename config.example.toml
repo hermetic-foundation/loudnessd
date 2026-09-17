@@ -1,4 +1,22 @@
 # Directional defaults apply to applications without an explicit entry.
+[playback]
+target_lufs = -16.0
+silence_gate_lufs = -50.0
+deadband_lu = 0.75
+maximum_boost_db = 18.0
+maximum_cut_db = 24.0
+boost_rate_db_per_second = 1.0
+cut_rate_db_per_second = 3.0
+
+[capture]
+target_lufs = -18.0
+silence_gate_lufs = -55.0
+deadband_lu = 1.0
+maximum_boost_db = 12.0
+maximum_cut_db = 18.0
+boost_rate_db_per_second = 0.5
+cut_rate_db_per_second = 3.0
+
 [defaults]
 playback = true
 capture = true

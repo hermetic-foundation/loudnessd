@@ -65,6 +65,8 @@ To install it through NixOS, add the flake input and module:
         {
           services.loudnessd = {
             enable = true;
+            settings.playback.targetLufs = -16.0;
+            settings.capture.targetLufs = -18.0;
             settings.defaults = {
               playback = true;
               capture = true;
@@ -79,7 +81,11 @@ To install it through NixOS, add the flake input and module:
 
 The module generates an immutable TOML configuration in the Nix store and
 starts `loudnessd` as a systemd user service after PipeWire. It does not write
-configuration under the user's home directory.
+configuration under the user's home directory. The `settings.playback` and
+`settings.capture` option groups independently expose `targetLufs`,
+`silenceGateLufs`, `deadbandLu`, `maximumBoostDb`, `maximumCutDb`,
+`boostRateDbPerSecond`, and `cutRateDbPerSecond`. Their defaults match the
+standalone daemon defaults shown below.
 
 An existing TOML file can be used instead of generated settings:
 
@@ -201,6 +207,24 @@ Pass a TOML policy with `--config PATH`. Playback and capture can be controlled
 independently at both the default and application level:
 
 ```toml
+[playback]
+target_lufs = -16.0
+silence_gate_lufs = -50.0
+deadband_lu = 0.75
+maximum_boost_db = 18.0
+maximum_cut_db = 24.0
+boost_rate_db_per_second = 1.0
+cut_rate_db_per_second = 3.0
+
+[capture]
+target_lufs = -18.0
+silence_gate_lufs = -55.0
+deadband_lu = 1.0
+maximum_boost_db = 12.0
+maximum_cut_db = 18.0
+boost_rate_db_per_second = 0.5
+cut_rate_db_per_second = 3.0
+
 [defaults]
 playback = true
 capture = true
@@ -213,7 +237,9 @@ playback = false
 capture = true
 ```
 
-An omitted direction inherits from `[defaults]`. Matching prefers PipeWire's
+The `[playback]` and `[capture]` controller sections are optional; omitted
+values inherit the built-in directional defaults. An omitted application
+direction inherits from `[defaults]`. Matching prefers PipeWire's
 `application.id`, then process binary, then application name. Streams without
 those properties receive a node-scoped fallback identity.
 

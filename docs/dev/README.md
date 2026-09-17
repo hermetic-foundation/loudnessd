@@ -161,6 +161,8 @@ The current live-suite evidence is recorded in
 PipeWire disconnect detection, stale-journal rejection, and systemd recovery
 are recorded in
 [`validation/2026-09-17-pipewire-restart.md`](validation/2026-09-17-pipewire-restart.md).
+Private playback and duplex-capture graph-rate results are recorded in
+[`validation/2026-09-17-sample-rate-matrix.md`](validation/2026-09-17-sample-rate-matrix.md).
 
 `tests/live/audio-soak.sh` starts a private PipeWire daemon and a policy-only
 WirePlumber instance in a temporary runtime directory. Playback mode drives two

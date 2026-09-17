@@ -88,7 +88,7 @@
             nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.clippy ];
             buildPhase = ''
               runHook preBuild
-              cargo clippy --offline --all-targets -- -D warnings
+              cargo clippy -j "''${NIX_BUILD_CORES:-1}" --offline --all-targets -- -D warnings
               runHook postBuild
             '';
             doCheck = false;

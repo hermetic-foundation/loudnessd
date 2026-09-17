@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use pipewire::{
     context::ContextRc,
     loop_::Signal,
     main_loop::MainLoopRc,
+    node::{Node, NodeListener},
     registry::{Listener as RegistryListener, RegistryRc},
     types::ObjectType,
 };
@@ -79,6 +84,7 @@ pub enum GraphEvent {
 #[derive(Clone, Debug, Default)]
 pub struct GraphState {
     streams: HashMap<u32, DiscoveredStream>,
+    streams_with_node_info: HashSet<u32>,
     ports: HashMap<u32, DiscoveredPort>,
     links: HashMap<u32, DiscoveredLink>,
 }
@@ -109,6 +115,7 @@ impl GraphState {
         match object {
             GraphObject::Stream(stream) => {
                 self.streams.remove(&stream.node_id);
+                self.streams_with_node_info.remove(&stream.node_id);
                 self.ports.retain(|_, port| port.node_id != stream.node_id);
                 self.links.retain(|_, link| {
                     link.output_node_id != stream.node_id && link.input_node_id != stream.node_id
@@ -128,6 +135,7 @@ impl GraphState {
 
     pub fn remove_id(&mut self, id: u32) {
         if let Some(stream) = self.streams.remove(&id) {
+            self.streams_with_node_info.remove(&id);
             self.ports.retain(|_, port| port.node_id != stream.node_id);
             self.links.retain(|_, link| {
                 link.output_node_id != stream.node_id && link.input_node_id != stream.node_id
@@ -149,6 +157,10 @@ impl GraphState {
 
     pub fn streams(&self) -> impl ExactSizeIterator<Item = &DiscoveredStream> {
         self.streams.values()
+    }
+
+    pub fn has_node_info(&self, node_id: u32) -> bool {
+        self.streams_with_node_info.contains(&node_id)
     }
 
     pub fn ports(&self) -> impl ExactSizeIterator<Item = &DiscoveredPort> {
@@ -174,13 +186,51 @@ impl GraphState {
             .get(&port_id)
             .is_some_and(|port| port.node_id == node_id && port.direction == direction)
     }
+
+    fn update_stream_properties<'a>(
+        &mut self,
+        node_id: u32,
+        property: impl Fn(&str) -> Option<&'a str>,
+    ) {
+        let Some(stream) = self.streams.get_mut(&node_id) else {
+            return;
+        };
+        self.streams_with_node_info.insert(node_id);
+        update_if_present(&mut stream.application_id, property("application.id"));
+        update_if_present(&mut stream.application_name, property("application.name"));
+        update_if_present(
+            &mut stream.process_binary,
+            property("application.process.binary"),
+        );
+        update_if_present(&mut stream.media_name, property("media.name"));
+    }
 }
 
-pub fn track_graph(registry: &RegistryRc) -> (Rc<RefCell<GraphState>>, RegistryListener) {
+fn update_if_present(target: &mut Option<String>, value: Option<&str>) {
+    if let Some(value) = value {
+        *target = Some(value.to_owned());
+    }
+}
+
+struct TrackedNode {
+    _node: Node,
+    _listener: NodeListener,
+}
+
+pub struct GraphTracker {
+    _registry_listener: RegistryListener,
+    _nodes: Rc<RefCell<HashMap<u32, TrackedNode>>>,
+}
+
+pub fn track_graph(registry: &RegistryRc) -> (Rc<RefCell<GraphState>>, GraphTracker) {
     let state = Rc::new(RefCell::new(GraphState::default()));
     let added_state = Rc::clone(&state);
     let removed_state = Rc::clone(&state);
-    let listener = registry
+    let nodes = Rc::new(RefCell::new(HashMap::new()));
+    let added_nodes = Rc::clone(&nodes);
+    let removed_nodes = Rc::clone(&nodes);
+    let registry_weak = registry.downgrade();
+    let registry_listener = registry
         .add_listener_local()
         .global(move |global| {
             let Some(properties) = global.props.as_ref() else {
@@ -189,12 +239,55 @@ pub fn track_graph(registry: &RegistryRc) -> (Rc<RefCell<GraphState>>, RegistryL
             if let Some(object) =
                 discover_graph_object(&global.type_, global.id, |key| properties.get(key))
             {
+                let is_stream = matches!(object, GraphObject::Stream(_));
                 added_state.borrow_mut().insert(object);
+                if !is_stream {
+                    return;
+                }
+                let Some(registry) = registry_weak.upgrade() else {
+                    return;
+                };
+                let node: Node = match registry.bind(global) {
+                    Ok(node) => node,
+                    Err(error) => {
+                        eprintln!("loudnessd: cannot bind stream node {}: {error}", global.id);
+                        return;
+                    }
+                };
+                let info_state = Rc::clone(&added_state);
+                let node_id = global.id;
+                let listener = node
+                    .add_listener_local()
+                    .info(move |info| {
+                        let Some(properties) = info.props() else {
+                            return;
+                        };
+                        info_state
+                            .borrow_mut()
+                            .update_stream_properties(node_id, |key| properties.get(key));
+                    })
+                    .register();
+                added_nodes.borrow_mut().insert(
+                    node_id,
+                    TrackedNode {
+                        _node: node,
+                        _listener: listener,
+                    },
+                );
             }
         })
-        .global_remove(move |id| removed_state.borrow_mut().remove_id(id))
+        .global_remove(move |id| {
+            removed_state.borrow_mut().remove_id(id);
+            removed_nodes.borrow_mut().remove(&id);
+        })
         .register();
-    (state, listener)
+    (
+        state,
+        GraphTracker {
+            _registry_listener: registry_listener,
+            _nodes: nodes,
+        },
+    )
 }
 
 pub fn domain_for_media_class(media_class: &str) -> Option<SignalDomain> {
@@ -251,45 +344,16 @@ pub fn snapshot_streams() -> Result<Vec<DiscoveredStream>, pipewire::Error> {
     let context = ContextRc::new(&main_loop, None)?;
     let core = context.connect_rc(None)?;
     let registry = core.get_registry_rc()?;
-    let streams = Rc::new(RefCell::new(Vec::new()));
-
-    let callback_streams = Rc::clone(&streams);
-    let _registry_listener = registry
-        .add_listener_local()
-        .global(move |global| {
-            if global.type_ != ObjectType::Node {
-                return;
-            }
-            let Some(properties) = global.props.as_ref() else {
-                return;
-            };
-            let Some(domain) = properties
-                .get("media.class")
-                .and_then(domain_for_media_class)
-            else {
-                return;
-            };
-            let property = |key: &str| properties.get(key).map(str::to_owned);
-            callback_streams.borrow_mut().push(DiscoveredStream {
-                node_id: global.id,
-                domain,
-                application_id: property("application.id"),
-                application_name: property("application.name"),
-                process_binary: property("application.process.binary"),
-                media_name: property("media.name"),
-            });
-        })
-        .register();
+    let (graph, _tracker) = track_graph(&registry);
 
     let callback_loop = main_loop.clone();
     let _core_listener = core
         .add_listener_local()
         .done(move |_, _| callback_loop.quit())
         .register();
-    core.sync(0)?;
-    main_loop.run();
+    sync_graph_metadata(&core, &main_loop)?;
 
-    let snapshot = streams.borrow().clone();
+    let snapshot = graph.borrow().streams().cloned().collect();
     Ok(snapshot)
 }
 
@@ -298,33 +362,35 @@ pub fn snapshot_graph() -> Result<Vec<GraphObject>, pipewire::Error> {
     let context = ContextRc::new(&main_loop, None)?;
     let core = context.connect_rc(None)?;
     let registry = core.get_registry_rc()?;
-    let objects = Rc::new(RefCell::new(Vec::new()));
-
-    let callback_objects = Rc::clone(&objects);
-    let _registry_listener = registry
-        .add_listener_local()
-        .global(move |global| {
-            let Some(properties) = global.props.as_ref() else {
-                return;
-            };
-            if let Some(object) =
-                discover_graph_object(&global.type_, global.id, |key| properties.get(key))
-            {
-                callback_objects.borrow_mut().push(object);
-            }
-        })
-        .register();
+    let (graph, _tracker) = track_graph(&registry);
 
     let callback_loop = main_loop.clone();
     let _core_listener = core
         .add_listener_local()
         .done(move |_, _| callback_loop.quit())
         .register();
-    core.sync(0)?;
-    main_loop.run();
+    sync_graph_metadata(&core, &main_loop)?;
 
-    let snapshot = objects.borrow().clone();
+    let graph = graph.borrow();
+    let snapshot = graph
+        .streams()
+        .cloned()
+        .map(GraphObject::Stream)
+        .chain(graph.ports().cloned().map(GraphObject::Port))
+        .chain(graph.links().cloned().map(GraphObject::Link))
+        .collect();
     Ok(snapshot)
+}
+
+fn sync_graph_metadata(
+    core: &pipewire::core::CoreRc,
+    main_loop: &MainLoopRc,
+) -> Result<(), pipewire::Error> {
+    for _ in 0..2 {
+        core.sync(0)?;
+        main_loop.run();
+    }
+    Ok(())
 }
 
 pub fn monitor_streams<F>(callback: F) -> Result<(), pipewire::Error>
@@ -574,6 +640,39 @@ mod tests {
 
         assert!(state.contains_link(11, 21));
         assert!(!state.contains_link(21, 11));
+    }
+
+    #[test]
+    fn graph_state_merges_late_node_metadata_without_clearing_fields() {
+        let mut state = GraphState::default();
+        state.insert(GraphObject::Stream(DiscoveredStream {
+            node_id: 10,
+            domain: SignalDomain::Playback,
+            application_id: None,
+            application_name: Some("Example Player".to_owned()),
+            process_binary: Some("example-player".to_owned()),
+            media_name: None,
+        }));
+        let properties = HashMap::from([
+            ("application.id", "org.example.Player"),
+            ("media.name", "Example Track"),
+        ]);
+
+        state.update_stream_properties(10, |key| properties.get(key).copied());
+        state.update_stream_properties(10, |_| None);
+
+        assert_eq!(
+            state.stream(10),
+            Some(&DiscoveredStream {
+                node_id: 10,
+                domain: SignalDomain::Playback,
+                application_id: Some("org.example.Player".to_owned()),
+                application_name: Some("Example Player".to_owned()),
+                process_binary: Some("example-player".to_owned()),
+                media_name: Some("Example Track".to_owned()),
+            })
+        );
+        assert!(state.has_node_info(10));
     }
 
     #[test]

@@ -151,10 +151,11 @@ silence. Unit coverage enforces the one-acquisition invariant and verifies
 that one temporarily unavailable channel does not discard other available
 buffers.
 
-The Nix flake checks Rust formatting, Clippy, the package test suite, the live
-harness with ShellCheck, and the NixOS module, including its generated
-immutable TOML and graphical-session user unit. CI does not execute live
-PipeWire tests or the soak harness against runner hardware.
+The Nix flake checks Rust formatting, Clippy, the package test suite, dependency
+licenses and source policy with cargo-deny, the live harness with ShellCheck,
+and the NixOS module, including its generated immutable TOML and
+graphical-session user unit. CI does not execute live PipeWire tests or the soak
+harness against runner hardware.
 
 The current live-suite evidence is recorded in
 [`validation/2026-09-17-live-pipewire-suite.md`](validation/2026-09-17-live-pipewire-suite.md).

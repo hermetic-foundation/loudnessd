@@ -63,6 +63,32 @@ let
       description = "Maximum downward gain slew rate.";
     };
   };
+  controllerAssertions = direction: settings: [
+    {
+      assertion = settings.silenceGateLufs < settings.targetLufs;
+      message = "services.loudnessd.settings.${direction}.silenceGateLufs must be below targetLufs";
+    }
+    {
+      assertion = settings.deadbandLu >= 0.0;
+      message = "services.loudnessd.settings.${direction}.deadbandLu must be non-negative";
+    }
+    {
+      assertion = settings.maximumBoostDb >= 0.0;
+      message = "services.loudnessd.settings.${direction}.maximumBoostDb must be non-negative";
+    }
+    {
+      assertion = settings.maximumCutDb >= 0.0;
+      message = "services.loudnessd.settings.${direction}.maximumCutDb must be non-negative";
+    }
+    {
+      assertion = settings.boostRateDbPerSecond > 0.0;
+      message = "services.loudnessd.settings.${direction}.boostRateDbPerSecond must be positive";
+    }
+    {
+      assertion = settings.cutRateDbPerSecond > 0.0;
+      message = "services.loudnessd.settings.${direction}.cutRateDbPerSecond must be positive";
+    }
+  ];
   applicationSettings = lib.mapAttrs (
     _: settings: lib.filterAttrs (_: value: value != null) settings
   ) cfg.settings.applications;
@@ -159,6 +185,11 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = lib.optionals (cfg.configFile == null) (
+      controllerAssertions "playback" cfg.settings.playback
+      ++ controllerAssertions "capture" cfg.settings.capture
+    );
+
     environment.systemPackages = [ cfg.package ];
 
     systemd.user.services.loudnessd = {

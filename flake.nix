@@ -47,6 +47,25 @@
             ];
           };
           service = moduleConfiguration.config.systemd.user.services.loudnessd;
+          invalidModuleConfiguration = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                services.loudnessd = {
+                  enable = true;
+                  settings.playback = {
+                    targetLufs = -16.0;
+                    silenceGateLufs = -12.0;
+                  };
+                };
+              }
+            ];
+          };
+          invalidControllerAssertion = nixpkgs.lib.findFirst (
+            entry:
+            entry.message == "services.loudnessd.settings.playback.silenceGateLufs must be below targetLufs"
+          ) null invalidModuleConfiguration.config.assertions;
           externalConfig = pkgs.writeText "loudnessd-external.toml" ''
             [defaults]
             playback = false
@@ -111,6 +130,8 @@
           module =
             assert builtins.elem "graphical-session.target" service.wantedBy;
             assert builtins.elem "pipewire.service" service.partOf;
+            assert invalidControllerAssertion != null;
+            assert !invalidControllerAssertion.assertion;
             pkgs.runCommand "loudnessd-module-check"
               {
                 execStart = service.serviceConfig.ExecStart;

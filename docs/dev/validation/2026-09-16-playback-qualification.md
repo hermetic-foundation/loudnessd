@@ -98,6 +98,31 @@ tripped the kernel realtime watchdog; the harness now disables realtime only
 inside its private runtime, and release qualification always uses the optimized
 package artifact.
 
+## Isolated pause/resume qualification
+
+Candidate `872f506a632e` passed a 15-second private-graph run after the harness
+sent PipeWire `Pause` and `Start` commands to the intermittent fixture's same
+application node. The test waited for a post-filter meter reading before the
+pause, then required that node's meter sequence to advance, post-filter LUFS to
+return, and its route to remain healthy after restart. The application process
+and node identity were preserved.
+
+| Measurement | Result |
+| --- | ---: |
+| Active streams in every monitor sample | 2 |
+| IPC failures | 0 |
+| Daemon restarts | 0 |
+| Skipped-stream observations | 0 |
+| Unhealthy-route observations | 0 |
+| Stalled-callback observations | 0 |
+| Fixture and filter error-counter growth | 0 |
+| Resident-memory growth | 4 KiB |
+| Average process CPU | 3.47% of one core |
+
+This proves the normalized processing path resumes after an explicit PipeWire
+node pause. A real browser pause/resume integration run remains required because
+browser session managers may apply additional node properties or graph policy.
+
 ## Remaining release evidence
 
 - Complete the eight-hour varied-content soak and measure memory growth from
@@ -106,8 +131,9 @@ package artifact.
 - Record application stream volume, mute, channel volume, and WirePlumber
   target before and after the soak.
 - Exercise limiter-bound material and verify the configured peak ceiling.
-- Exercise a real browser-style node pause and resume. Feeding zero-valued
-  samples is not equivalent because the PipeWire node remains processing.
+- Exercise a real browser pause and resume. The synthetic node-command case now
+  passes, but feeding zero-valued samples is not equivalent and browser graph
+  policy still needs direct integration evidence.
 - Complete the lifecycle and recovery matrix from the release gates.
 
 ## Failed extended soak

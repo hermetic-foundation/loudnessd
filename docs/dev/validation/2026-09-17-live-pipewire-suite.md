@@ -3,7 +3,7 @@
 ## Result
 
 Pass. Every ignored Rust test that requires a live PipeWire user session passed
-serially on candidate `f39e1c42c9bf538d6cff6644d23b1c3864f9f7a1`.
+serially on candidate `ab5559398faa828e59a48f96f39b7eef3688ba1e`.
 
 ## Environment
 
@@ -20,14 +20,16 @@ nix develop -c cargo test -j 2 -- --ignored --test-threads=1
 
 ## Coverage
 
-All five live tests passed:
+All six live tests passed:
 
 - registry snapshots exposed links with resolvable ports;
 - connected inactive filters registered their nodes;
 - unconnected filters owned ports without registering nodes;
 - client-owned and lingering links followed their documented lifetimes; and
 - route installation and ordered bypass used only disposable nodes and restored
-  the original direct route.
+  the original direct route; and
+- route installation cleaned up its staged filter and links when the source
+  application exited immediately before cutover.
 
 The run completed with no test failure and did not disturb existing desktop
 audio streams. These tests cover live API and transaction mechanics, but do not

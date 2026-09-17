@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use crate::{
     ControllerBank, ControllerConfig, Decision, SignalDomain,
     pipewire_backend::GraphState,
+    pipewire_filter::FilterState,
     process_metrics,
     routing::{RouteHealth, route_health},
     status::{
@@ -50,26 +51,36 @@ fn stream_status(
     controllers: &ControllerBank,
     graph: &GraphState,
 ) -> StreamStatus {
-    let (filter_node_id, lifecycle, route, control) = match managed {
+    let (filter_node_id, filter_state, filter_error, lifecycle, route, control) = match managed {
         ManagedStream::Connecting {
             filter, control, ..
-        } => (
-            filter.node_id(),
-            StreamLifecycle::Connecting,
-            RouteStatus::Connecting,
-            control,
-        ),
+        } => {
+            let (state, error) = filter.state();
+            (
+                filter.node_id(),
+                filter_state_name(state),
+                error,
+                StreamLifecycle::Connecting,
+                RouteStatus::Connecting,
+                control,
+            )
+        }
         ManagedStream::Active {
             filter,
             control,
             route,
             ..
-        } => (
-            filter.node_id(),
-            StreamLifecycle::Active,
-            route_status(route_health(route.plan(), graph)),
-            control,
-        ),
+        } => {
+            let (state, error) = filter.state();
+            (
+                filter.node_id(),
+                filter_state_name(state),
+                error,
+                StreamLifecycle::Active,
+                route_status(route_health(route.plan(), graph)),
+                control,
+            )
+        }
     };
     let update = control.last_update();
     let meter = update.map(|update| update.meter);
@@ -81,6 +92,8 @@ fn stream_status(
     StreamStatus {
         node_id,
         filter_node_id,
+        filter_state: Some(filter_state),
+        filter_error,
         domain: domain_name(control.domain()).to_owned(),
         application: control.application_id().to_owned(),
         meter_sequence: meter.map(|meter| meter.sequence),
@@ -104,6 +117,17 @@ fn stream_status(
         limiter_max_db: meter
             .map(|meter| meter.maximum_limiter_reduction_db)
             .unwrap_or(0.0),
+    }
+}
+
+fn filter_state_name(state: FilterState) -> String {
+    match state {
+        FilterState::Error => "error".to_owned(),
+        FilterState::Unconnected => "unconnected".to_owned(),
+        FilterState::Connecting => "connecting".to_owned(),
+        FilterState::Paused => "paused".to_owned(),
+        FilterState::Streaming => "streaming".to_owned(),
+        FilterState::Unknown(raw) => format!("unknown({raw})"),
     }
 }
 

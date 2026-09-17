@@ -32,6 +32,10 @@ pub enum ControlStatus {
 pub struct StreamStatus {
     pub node_id: u32,
     pub filter_node_id: Option<u32>,
+    #[serde(default)]
+    pub filter_state: Option<String>,
+    #[serde(default)]
+    pub filter_error: Option<String>,
     pub domain: String,
     pub application: String,
     pub meter_sequence: Option<u64>,
@@ -101,12 +105,14 @@ impl DaemonStatus {
         }
         for stream in &self.streams {
             output.push_str(&format!(
-                "stream={} filter={} domain={} application={} sequence={} state={} route={} control={} target_lufs={:.2} source_lufs={} source_peak_dbtp={} output_lufs={} output_peak_dbtp={} gain_db={:.2} gain_clamped={} limiter_db={:.2} limiter_max_db={:.2}\n",
+                "stream={} filter={} filter_state={} filter_error={} domain={} application={} sequence={} state={} route={} control={} target_lufs={:.2} source_lufs={} source_peak_dbtp={} output_lufs={} output_peak_dbtp={} gain_db={:.2} gain_clamped={} limiter_db={:.2} limiter_max_db={:.2}\n",
                 stream.node_id,
                 stream
                     .filter_node_id
                     .map(|node_id| node_id.to_string())
                     .unwrap_or_else(|| "unavailable".to_owned()),
+                stream.filter_state.as_deref().unwrap_or("unavailable"),
+                stream.filter_error.as_deref().unwrap_or("none"),
                 stream.domain,
                 stream.application,
                 stream
@@ -197,6 +203,8 @@ mod tests {
             streams: vec![StreamStatus {
                 node_id: 42,
                 filter_node_id: Some(84),
+                filter_state: Some("streaming".to_owned()),
+                filter_error: None,
                 domain: "playback".to_owned(),
                 application: "browser".to_owned(),
                 meter_sequence: Some(12),
@@ -225,6 +233,7 @@ mod tests {
         assert!(text.contains("process_pid=123 process_start_time_ticks=4567"));
         assert!(text.contains("route=healthy control=settled"));
         assert!(text.contains("stream=42 filter=84"));
+        assert!(text.contains("filter_state=streaming filter_error=none"));
         assert!(text.contains("output_lufs=-13.10"));
         assert!(text.contains(
             "skipped_stream=99 domain=capture application=recorder reason=disabled by policy"
@@ -233,6 +242,8 @@ mod tests {
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["streams"][0]["route"], "healthy");
         assert_eq!(json["streams"][0]["filter_node_id"], 84);
+        assert_eq!(json["streams"][0]["filter_state"], "streaming");
+        assert_eq!(json["streams"][0]["filter_error"], serde_json::Value::Null);
         assert_eq!(json["process"]["pid"], 123);
         assert_eq!(json["process"]["start_time_ticks"], 4_567);
         assert_eq!(json["process"]["rss_bytes"], 1_572_864);

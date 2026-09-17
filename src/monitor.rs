@@ -287,6 +287,8 @@ mod tests {
             streams: vec![StreamStatus {
                 node_id: 9,
                 filter_node_id: Some(19),
+                filter_state: Some("streaming".to_owned()),
+                filter_error: None,
                 domain: "playback".to_owned(),
                 application: "player".to_owned(),
                 meter_sequence: Some(sequence),

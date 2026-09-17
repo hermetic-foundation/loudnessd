@@ -71,7 +71,7 @@ silence-gate result is recorded in
 | Application exit during managed routing | Pass |
 | Valid and invalid configuration reload | Pass |
 | Hardware-backed source profile removal and reconnection | Pass |
-| Physical USB hot-unplug and reconnection | Open |
+| USB driver removal, re-enumeration, and reconnection | Pass |
 | System suspend and resume | Open |
 
 Passing recovery evidence is recorded in
@@ -79,9 +79,9 @@ Passing recovery evidence is recorded in
 [`2026-09-17-pipewire-restart.md`](2026-09-17-pipewire-restart.md), and the
 playback qualification records. The controlled Scarlett profile-cycle result
 is recorded in
-[`2026-09-17-device-reconnect.md`](2026-09-17-device-reconnect.md). Literal USB
-removal and suspend require a controlled desktop test because they can
-interrupt the active audio session.
+[`2026-09-17-device-reconnect.md`](2026-09-17-device-reconnect.md), together
+with kernel USB removal and re-enumeration. Suspend remains open because it
+interrupts the active desktop session.
 
 ## Codebase audit
 
@@ -99,7 +99,7 @@ interrupt the active audio session.
 1. Complete and accept the final eight-hour soak.
 2. Demonstrate non-silent physical microphone convergence through a
    hardware-backed capture stream.
-3. Pass controlled physical USB hot-unplug/reconnection and suspend/resume.
+3. Pass controlled suspend/resume.
 4. Obtain a green reusable GitHub workflow on the exact release revision after
    the organization runner leaves quarantine.
 5. Re-run the audit against the final `main`, resolve every high-severity

@@ -2,10 +2,9 @@
 
 ## Result
 
-Pass for active source removal and recreation through the ALSA card profile.
-The capture route failed open when its Scarlett source disappeared and became
-healthy again after the source returned. A literal USB hot-unplug remains a
-separate release check.
+Pass for active source removal and recreation through both the ALSA card
+profile and the kernel USB driver. In each case, the capture route failed open
+when its source disappeared and became healthy again after the source returned.
 
 ## Environment
 
@@ -39,5 +38,29 @@ trap that restored both before terminating the recorder.
 
 No audio payload or temporary test artifact was retained. This check proves
 recovery from a hardware-backed source disappearing at the PipeWire graph
-boundary. A physical USB disconnect is still required to cover kernel device
-removal, enumeration, and card identity changes.
+boundary.
+
+## USB driver removal and re-enumeration
+
+The same test client subsequently ran while device `3-1.4.1` was unbound from
+and rebound to the kernel USB driver. The active Feixiang playback device is on
+a different USB path and remained untouched.
+
+1. Before removal, loudnessd held a healthy capture route for stream node 120.
+2. Kernel unbind removed the USB device, its ALSA card, and its PipeWire source.
+   The managed stream disappeared from `status-json`, and no matching filter
+   remained in the graph.
+3. Kernel bind re-enumerated the device. The restart-tolerant capture client
+   retained stream node 120, and loudnessd recreated a healthy route without a
+   daemon restart.
+4. The journal recorded `route endpoint disappeared; reconnecting`, followed
+   by `recovered broken route for stream 120`.
+5. PipeWire assigned a new card and source object, proving recovery did not
+   depend on stale numeric IDs. The stable default-source name, `HiFi` profile,
+   and 50% source volume were restored.
+6. Cleanup removed the client and managed route, leaving no stale node or
+   temporary artifact.
+
+The USB bind operation was protected by a cleanup trap that attempted rebind
+on every exit path. This covers kernel removal, re-enumeration, PipeWire object
+replacement, route cleanup, and route recovery without a physical cable event.

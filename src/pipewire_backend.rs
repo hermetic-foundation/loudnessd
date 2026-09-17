@@ -181,6 +181,17 @@ impl GraphState {
         self.links.contains_key(&link_id)
     }
 
+    pub fn contains_link_identity(
+        &self,
+        link_id: u32,
+        output_port_id: u32,
+        input_port_id: u32,
+    ) -> bool {
+        self.links.get(&link_id).is_some_and(|link| {
+            link.output_port_id == output_port_id && link.input_port_id == input_port_id
+        })
+    }
+
     pub fn contains_port(&self, node_id: u32, port_id: u32, direction: PortDirection) -> bool {
         self.ports
             .get(&port_id)
@@ -640,6 +651,32 @@ mod tests {
 
         assert!(state.contains_link(11, 21));
         assert!(!state.contains_link(21, 11));
+    }
+
+    #[test]
+    fn graph_state_distinguishes_reused_link_ids_by_endpoints() {
+        let mut state = GraphState::default();
+        state.insert(GraphObject::Link(DiscoveredLink {
+            link_id: 12,
+            output_node_id: 10,
+            output_port_id: 11,
+            input_node_id: 20,
+            input_port_id: 21,
+        }));
+
+        assert!(state.contains_link_identity(12, 11, 21));
+        assert!(!state.contains_link_identity(12, 31, 41));
+
+        state.insert(GraphObject::Link(DiscoveredLink {
+            link_id: 12,
+            output_node_id: 30,
+            output_port_id: 31,
+            input_node_id: 40,
+            input_port_id: 41,
+        }));
+
+        assert!(!state.contains_link_identity(12, 11, 21));
+        assert!(state.contains_link_identity(12, 31, 41));
     }
 
     #[test]

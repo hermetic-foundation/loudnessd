@@ -108,9 +108,13 @@ impl<'a> PipewireRouteBackend<'a> {
 
     fn links_absent(&self, links: &[OriginalLink]) -> bool {
         self.wait_for(|graph| {
-            links
-                .iter()
-                .all(|link| !graph.contains_link_id(link.link_id))
+            links.iter().all(|link| {
+                !graph.contains_link_identity(
+                    link.link_id,
+                    link.spec.output.port_id,
+                    link.spec.input.port_id,
+                )
+            })
         })
     }
 
@@ -146,7 +150,13 @@ impl<'a> PipewireRouteBackend<'a> {
             let graph = self.graph.borrow();
             links
                 .iter()
-                .filter(|link| !graph.contains_link_id(link.link_id))
+                .filter(|link| {
+                    !graph.contains_link_identity(
+                        link.link_id,
+                        link.spec.output.port_id,
+                        link.spec.input.port_id,
+                    )
+                })
                 .map(|link| link.spec)
                 .collect()
         };

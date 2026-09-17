@@ -57,6 +57,7 @@ pub struct SoakReport {
     pub convergence_passing_observations: u64,
     pub convergence_ratio: Option<f64>,
     pub maximum_limiter_reduction_db: f32,
+    pub maximum_output_true_peak_dbtp: Option<f32>,
     pub initial_rss_bytes: Option<u64>,
     pub final_rss_bytes: Option<u64>,
     pub peak_rss_bytes: Option<u64>,
@@ -173,6 +174,13 @@ impl SoakAccumulator {
                 .report
                 .maximum_limiter_reduction_db
                 .max(stream.limiter_max_db);
+            if let Some(output_peak_dbtp) = stream.output_peak_dbtp {
+                self.report.maximum_output_true_peak_dbtp = Some(
+                    self.report
+                        .maximum_output_true_peak_dbtp
+                        .map_or(output_peak_dbtp, |maximum| maximum.max(output_peak_dbtp)),
+                );
+            }
 
             let eligible = stream.lifecycle == StreamLifecycle::Active
                 && stream.route == RouteStatus::Healthy
@@ -326,6 +334,7 @@ mod tests {
         assert_eq!(report.convergence_passing_observations, 2);
         assert_eq!(report.convergence_ratio, Some(2.0 / 3.0));
         assert_eq!(report.maximum_limiter_reduction_db, 0.4);
+        assert_eq!(report.maximum_output_true_peak_dbtp, Some(-1.0));
         assert_eq!(report.initial_rss_bytes, Some(2_001_000));
         assert_eq!(report.final_rss_bytes, Some(2_002_000));
         assert_eq!(report.rss_growth_bytes, Some(1000));

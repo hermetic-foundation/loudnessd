@@ -41,6 +41,8 @@ capture_node_id=
 pipewire_pid=
 wireplumber_pid=
 top_pid=
+declare -A baseline_controls=()
+declare -A baseline_targets=()
 host_runtime=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR must be set}
 test_runtime=$(mktemp -d "$host_runtime/loudnessd-soak.XXXXXX")
 test_config=$test_runtime/config.toml
@@ -217,6 +219,30 @@ save_startup_diagnostics() {
   "${private_env[@]}" pw-dump >"$output.startup-graph.json" 2>/dev/null || true
 }
 
+stream_control_state() {
+  "${private_env[@]}" pw-cli enum-params "$1" Props
+}
+
+stream_target_state() {
+  local node_id=$1
+  "${private_env[@]}" pw-dump | jq -Sc --argjson node_id "$node_id" '
+    first(.[] | select(.id == $node_id) | .info.props) |
+    {
+      node_target: .["node.target"] // null,
+      target_object: .["target.object"] // null
+    }
+  '
+}
+
+save_state_mismatch() {
+  local node_id=$1
+  local kind=$2
+  local before=$3
+  local after=$4
+  printf '%s\n' "$before" >"$output.$node_id.$kind.before"
+  printf '%s\n' "$after" >"$output.$node_id.$kind.after"
+}
+
 create_sink
 if ! wait_for_sink; then
   echo "loudnessd soak sink did not appear" >&2
@@ -300,6 +326,7 @@ for _ in {1..100}; do
     .active == $expected and .managed == $expected and .skipped == 0 and
     all(.streams[]; .route == "healthy")
   ' >/dev/null 2>&1 <<<"$status"; then
+    mapfile -t fixture_ids < <(jq -r '.streams[].node_id' <<<"$status")
     ready=true
     break
   fi
@@ -314,6 +341,17 @@ if [[ $ready != true ]]; then
   echo "isolated $mode soak streams did not become active" >&2
   exit 1
 fi
+
+for index in "${!fixture_ids[@]}"; do
+  node_id=${fixture_ids[$index]}
+  fixture_volume=$(printf '0.%02d' "$((67 + index * 12))")
+  "${private_env[@]}" wpctl set-volume "$node_id" "$fixture_volume"
+  "${private_env[@]}" wpctl set-mute "$node_id" 0
+done
+sleep 1
+for node_id in "${fixture_ids[@]}"; do
+  baseline_controls[$node_id]=$(stream_control_state "$node_id")
+done
 
 previous_sink_serial=$sink_serial
 "${private_env[@]}" pw-cli destroy "$sink_id"
@@ -351,6 +389,9 @@ if [[ $recovered != true ]]; then
   echo "streams did not recover after isolated sink replacement" >&2
   exit 1
 fi
+for node_id in "${fixture_ids[@]}"; do
+  baseline_targets[$node_id]=$(stream_target_state "$node_id")
+done
 
 pause_ready=false
 paused_stream_id=
@@ -442,6 +483,24 @@ if ! wait "$top_pid"; then
   exit 1
 fi
 top_pid=
+
+for node_id in "${fixture_ids[@]}"; do
+  final_controls=$(stream_control_state "$node_id")
+  if [[ $final_controls != "${baseline_controls[$node_id]}" ]]; then
+    save_state_mismatch \
+      "$node_id" controls "${baseline_controls[$node_id]}" "$final_controls"
+    echo "isolated soak node $node_id changed application volume or mute controls" >&2
+    exit 1
+  fi
+
+  final_target=$(stream_target_state "$node_id")
+  if [[ $final_target != "${baseline_targets[$node_id]}" ]]; then
+    save_state_mismatch \
+      "$node_id" target "${baseline_targets[$node_id]}" "$final_target"
+    echo "isolated soak node $node_id changed its persistent target" >&2
+    exit 1
+  fi
+done
 
 mapfile -t filter_ids < <(awk '
   $2 ~ /^[0-9]+$/ && $NF == "loudnessd" { ids[$2] = 1 }

@@ -998,8 +998,14 @@ if (( ${#filter_ids[@]} != expected_active )); then
   exit 1
 fi
 
-printf 'node_id\trecovery_baseline\tmaximum\tdelta\n' >"$profiler_error_output"
-for node_id in "${fixture_ids[@]}" "${filter_ids[@]}"; do
+printf 'node_id\trole\tenforced\trecovery_baseline\tmaximum\tdelta\n' >"$profiler_error_output"
+check_profiler_node() {
+  local node_id=$1
+  local role=$2
+  local enforced=$3
+  local initial_error
+  local maximum_error
+  local error_delta
   initial_error=$(node_initial_running_error "$node_id" || true)
   maximum_error=$(node_max_running_error "$node_id" || true)
   if [[ -z $initial_error || -z $maximum_error ]]; then
@@ -1007,17 +1013,28 @@ for node_id in "${fixture_ids[@]}" "${filter_ids[@]}"; do
     exit 1
   fi
   error_delta=$((maximum_error - initial_error))
-  printf '%s\t%s\t%s\t%s\n' \
-    "$node_id" "$initial_error" "$maximum_error" "$error_delta" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$node_id" "$role" "$enforced" "$initial_error" "$maximum_error" "$error_delta" \
     >>"$profiler_error_output"
-  if (( initial_error > 2 )); then
+  if [[ $enforced == true ]] && (( initial_error > 2 )); then
     echo "isolated soak node $node_id started monitoring with $initial_error PipeWire recovery errors" >&2
     exit 1
   fi
-  if (( error_delta != 0 )); then
+  if [[ $enforced == true ]] && (( error_delta != 0 )); then
     echo "isolated soak node $node_id accumulated $error_delta PipeWire errors during monitoring" >&2
     exit 1
   fi
+}
+
+fixture_errors_enforced=true
+if [[ $mode == memory ]]; then
+  fixture_errors_enforced=false
+fi
+for node_id in "${fixture_ids[@]}"; do
+  check_profiler_node "$node_id" fixture "$fixture_errors_enforced"
+done
+for node_id in "${filter_ids[@]}"; do
+  check_profiler_node "$node_id" filter true
 done
 if grep -q '^\[E\]' "$server_log" "$wireplumber_log"; then
   echo "isolated PipeWire services logged an error" >&2

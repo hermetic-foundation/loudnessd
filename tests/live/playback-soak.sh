@@ -22,6 +22,7 @@ sink_id=
 sink_serial=
 pipewire_pid=
 wireplumber_pid=
+top_pid=
 host_runtime=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR must be set}
 test_runtime=$(mktemp -d "$host_runtime/loudnessd-soak.XXXXXX")
 test_config=$test_runtime/config.toml
@@ -29,7 +30,6 @@ client_config_dir=$test_runtime/config-home/pipewire/client.conf.d
 server_log=$output.pipewire-server.log
 wireplumber_log=$output.wireplumber.log
 top_output=$output.pipewire-top.txt
-baseline_top_output=$output.pipewire-top-baseline.txt
 private_env=(env
   PIPEWIRE_RUNTIME_DIR="$test_runtime"
   XDG_RUNTIME_DIR="$test_runtime"
@@ -57,6 +57,10 @@ cleanup() {
   if [[ -n $wireplumber_pid ]]; then
     kill "$wireplumber_pid" 2>/dev/null || true
     wait "$wireplumber_pid" 2>/dev/null || true
+  fi
+  if [[ -n $top_pid ]]; then
+    kill "$top_pid" 2>/dev/null || true
+    wait "$top_pid" 2>/dev/null || true
   fi
   if [[ -n $pipewire_pid ]]; then
     kill "$pipewire_pid" 2>/dev/null || true
@@ -308,28 +312,22 @@ if [[ $resumed != true ]]; then
   exit 1
 fi
 
-"${private_env[@]}" pw-top -b -n 3 >"$baseline_top_output"
-
-node_error() {
+node_max_error() {
   local node_id=$1
-  local snapshot=$2
   awk -v node_id="$node_id" '
-    $2 == node_id { found = 1; errors = $9 }
+    $2 == node_id && $9 ~ /^[0-9]+$/ {
+      found = 1
+      if ($9 > maximum) maximum = $9
+    }
     END {
       if (!found) exit 1
-      print errors
+      print maximum + 0
     }
-  ' "$snapshot"
+  ' "$top_output"
 }
 
-mapfile -t filter_ids < <(awk '
-  $2 ~ /^[0-9]+$/ && $NF == "loudnessd" { ids[$2] = 1 }
-  END { for (node_id in ids) print node_id }
-' "$baseline_top_output")
-if (( ${#filter_ids[@]} != 2 )); then
-  echo "isolated loudnessd filters are missing after route recovery" >&2
-  exit 1
-fi
+"${private_env[@]}" pw-top -b -n "$((duration + 2))" >"$top_output" &
+top_pid=$!
 
 monitor_status=0
 "${private_env[@]}" "$loudnessd" monitor \
@@ -338,16 +336,29 @@ monitor_status=0
   --expect-active 2 \
   --output "$output" || monitor_status=$?
 
-"${private_env[@]}" pw-top -b -n 3 >"$top_output"
+if ! wait "$top_pid"; then
+  echo "continuous PipeWire profiler failed" >&2
+  exit 1
+fi
+top_pid=
+
+mapfile -t filter_ids < <(awk '
+  $2 ~ /^[0-9]+$/ && $NF == "loudnessd" { ids[$2] = 1 }
+  END { for (node_id in ids) print node_id }
+' "$top_output")
+if (( ${#filter_ids[@]} != 2 )); then
+  echo "isolated loudnessd filters are missing from the profiler timeline" >&2
+  exit 1
+fi
+
 for node_id in "${fixture_ids[@]}" "${filter_ids[@]}"; do
-  baseline_error=$(node_error "$node_id" "$baseline_top_output" || true)
-  final_error=$(node_error "$node_id" "$top_output" || true)
-  if [[ -z $baseline_error || -z $final_error ]]; then
-    echo "isolated soak node $node_id disappeared" >&2
+  maximum_error=$(node_max_error "$node_id" || true)
+  if [[ -z $maximum_error ]]; then
+    echo "isolated soak node $node_id is missing from the profiler timeline" >&2
     exit 1
   fi
-  if (( final_error != baseline_error )); then
-    echo "isolated soak node $node_id accumulated PipeWire errors during monitoring" >&2
+  if (( maximum_error != 0 )); then
+    echo "isolated soak node $node_id reached $maximum_error PipeWire errors during monitoring" >&2
     exit 1
   fi
 done

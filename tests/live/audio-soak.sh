@@ -3,8 +3,8 @@
 
 set -euo pipefail
 
-if (( $# != 6 )); then
-  echo "usage: audio-soak.sh LOUDNESSD SOX PIPEWIRE WIREPLUMBER DURATION_SECONDS OUTPUT" >&2
+if (( $# < 6 || $# > 7 )); then
+  echo "usage: audio-soak.sh LOUDNESSD SOX PIPEWIRE WIREPLUMBER DURATION_SECONDS OUTPUT [playback|capture]" >&2
   exit 2
 fi
 
@@ -14,12 +14,30 @@ pipewire=$3
 wireplumber=$4
 duration=$5
 output=$6
+mode=${7:-playback}
+case $mode in
+  playback)
+    expected_active=2
+    pause_application=loudnessd.soak.intermittent
+    pause_domain=playback
+    ;;
+  capture)
+    expected_active=2
+    pause_application=loudnessd.soak.duplex
+    pause_domain=capture
+    ;;
+  *)
+    echo "unknown soak mode: $mode" >&2
+    exit 2
+    ;;
+esac
 sink_name="loudnessd-soak-sink"
 daemon_pid=
 first_stream_pid=
 second_stream_pid=
 sink_id=
 sink_serial=
+capture_node_id=
 pipewire_pid=
 wireplumber_pid=
 top_pid=
@@ -78,18 +96,29 @@ printf '%s\n' \
   '  loop.rt-prio = 0' \
   '}' >"$client_config_dir/10-no-realtime.conf"
 
-printf '%s\n' \
-  '[defaults]' \
-  'playback = false' \
-  'capture = false' \
-  '' \
-  '[applications."loudnessd.soak.continuous"]' \
-  'playback = true' \
-  'capture = false' \
-  '' \
-  '[applications."loudnessd.soak.intermittent"]' \
-  'playback = true' \
-  'capture = false' >"$test_config"
+if [[ $mode == playback ]]; then
+  printf '%s\n' \
+    '[defaults]' \
+    'playback = false' \
+    'capture = false' \
+    '' \
+    '[applications."loudnessd.soak.continuous"]' \
+    'playback = true' \
+    'capture = false' \
+    '' \
+    '[applications."loudnessd.soak.intermittent"]' \
+    'playback = true' \
+    'capture = false' >"$test_config"
+else
+  printf '%s\n' \
+    '[defaults]' \
+    'playback = false' \
+    'capture = false' \
+    '' \
+    '[applications."loudnessd.soak.duplex"]' \
+    'playback = true' \
+    'capture = true' >"$test_config"
+fi
 
 "${private_env[@]}" "$pipewire" >"$server_log" 2>&1 &
 pipewire_pid=$!
@@ -155,6 +184,34 @@ wait_for_sink() {
   return 1
 }
 
+wait_for_capture_node() {
+  local node=
+  for _ in {1..50}; do
+    node=$("${private_env[@]}" pw-dump | jq -r '
+      first(.[] | select(
+        .type == "PipeWire:Interface:Node" and
+        .info.props["application.id"]? == "loudnessd.soak.duplex" and
+        .info.props["media.class"]? == "Stream/Input/Audio"
+      ) | .id) // empty
+    ')
+    if [[ -n $node ]]; then
+      capture_node_id=$node
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+link_capture_monitor() {
+  local channel
+  for channel in 0 1; do
+    "${private_env[@]}" pw-cli create-link \
+      "$sink_id" "$channel" "$capture_node_id" "$channel" \
+      '{ object.linger = true }' >/dev/null
+  done
+}
+
 save_startup_diagnostics() {
   printf '%s\n' "${status:-}" >"$output.startup-status.json"
   "${private_env[@]}" pw-dump >"$output.startup-graph.json" 2>/dev/null || true
@@ -167,55 +224,94 @@ if ! wait_for_sink; then
 fi
 
 generate_first_stream() {
-  while true; do
-    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
-      synth 45 sine 220 sine 330 vol 0.035
-    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
-      synth 15 sine 220 sine 330 vol 0.003
+  local output_file=$1
+  local generated=0
+  : >"$output_file"
+  while (( generated < duration + 60 )); do
+    {
+      "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+        synth 45 sine 220 sine 330 vol 0.035
+      "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+        synth 15 sine 220 sine 330 vol 0.003
+    } >>"$output_file"
+    generated=$((generated + 60))
   done
 }
 
 generate_second_stream() {
-  while true; do
-    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
-      synth 30 pinknoise vol 0.12
-    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
-      synth 10 sine 550 sine 770 vol 0
-    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
-      synth 20 sine 550 sine 770 vol 0.08
+  local output_file=$1
+  local generated=0
+  : >"$output_file"
+  while (( generated < duration + 60 )); do
+    {
+      "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+        synth 30 pinknoise vol 0.12
+      "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+        synth 10 sine 550 sine 770 vol 0
+      "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+        synth 20 sine 550 sine 770 vol 0.08
+    } >>"$output_file"
+    generated=$((generated + 60))
   done
 }
 
-generate_first_stream | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
-  --rate 48000 --channels 2 --channel-map Stereo --format f32 \
-  --properties='application.id=loudnessd.soak.continuous application.name=Loudnessd-Soak-Continuous' - &
-first_stream_pid=$!
+if [[ $mode == playback ]]; then
+  first_fixture=$test_runtime/first-stream.raw
+  second_fixture=$test_runtime/second-stream.raw
+  generate_first_stream "$first_fixture"
+  generate_second_stream "$second_fixture"
 
-generate_second_stream | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
-  --rate 48000 --channels 2 --channel-map Stereo --format f32 \
-  --properties='application.id=loudnessd.soak.intermittent application.name=Loudnessd-Soak-Intermittent' - &
-second_stream_pid=$!
+  cat "$first_fixture" | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+    --rate 48000 --channels 2 --channel-map Stereo --format f32 \
+    --properties='application.id=loudnessd.soak.continuous application.name=Loudnessd-Soak-Continuous' - &
+  first_stream_pid=$!
+
+  cat "$second_fixture" | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+    --rate 48000 --channels 2 --channel-map Stereo --format f32 \
+    --properties='application.id=loudnessd.soak.intermittent application.name=Loudnessd-Soak-Intermittent' - &
+  second_stream_pid=$!
+else
+  second_fixture=$test_runtime/second-stream.raw
+  generate_second_stream "$second_fixture"
+
+  cat "$second_fixture" | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
+    --rate 48000 --channels 2 --channel-map Stereo --format f32 \
+    --properties='application.id=loudnessd.soak.duplex application.name=Loudnessd-Soak-Duplex' - &
+  first_stream_pid=$!
+
+  "${private_env[@]}" pw-cat --record --raw --target 0 \
+    --rate 48000 --channels 2 --channel-map Stereo --format f32 \
+    --properties='application.id=loudnessd.soak.duplex application.name=Loudnessd-Soak-Duplex' \
+    /dev/null &
+  second_stream_pid=$!
+  if ! wait_for_capture_node; then
+    save_startup_diagnostics
+    echo "isolated capture recorder did not appear" >&2
+    exit 1
+  fi
+  link_capture_monitor
+fi
 
 ready=false
 fixture_ids=()
 for _ in {1..100}; do
   status=$("${private_env[@]}" "$loudnessd" msg status-json 2>/dev/null || true)
-  if jq -e '
-    .active == 2 and .managed == 2 and .skipped == 0 and
+  if jq -e --argjson expected "$expected_active" '
+    .active == $expected and .managed == $expected and .skipped == 0 and
     all(.streams[]; .route == "healthy")
   ' >/dev/null 2>&1 <<<"$status"; then
     ready=true
     break
   fi
   if ! kill -0 "$daemon_pid" 2>/dev/null; then
-    echo "candidate daemon exited before both fixtures became active" >&2
+    echo "candidate daemon exited before the fixtures became active" >&2
     exit 1
   fi
   sleep 0.1
 done
 if [[ $ready != true ]]; then
   save_startup_diagnostics
-  echo "both isolated soak streams did not become active" >&2
+  echo "isolated $mode soak streams did not become active" >&2
   exit 1
 fi
 
@@ -229,12 +325,15 @@ if ! wait_for_sink "$previous_sink_serial"; then
   echo "replacement soak sink did not appear" >&2
   exit 1
 fi
+if [[ $mode == capture ]]; then
+  link_capture_monitor
+fi
 
 recovered=false
 for _ in {1..100}; do
   status=$("${private_env[@]}" "$loudnessd" msg status-json 2>/dev/null || true)
-  if jq -e '
-    .active == 2 and .managed == 2 and .skipped == 0 and
+  if jq -e --argjson expected "$expected_active" '
+    .active == $expected and .managed == $expected and .skipped == 0 and
     all(.streams[]; .route == "healthy")
   ' >/dev/null 2>&1 <<<"$status"; then
     mapfile -t fixture_ids < <(jq -r '.streams[].node_id' <<<"$status")
@@ -258,8 +357,10 @@ paused_stream_id=
 paused_sequence=
 for _ in {1..50}; do
   status=$("${private_env[@]}" "$loudnessd" msg status-json 2>/dev/null || true)
-  paused_stream_id=$(jq -r '
-    first(.streams[] | select(.application == "loudnessd.soak.intermittent") | .node_id) // empty
+  paused_stream_id=$(jq -r --arg application "$pause_application" --arg domain "$pause_domain" '
+    first(.streams[] | select(
+      .application == $application and .domain == $domain
+    ) | .node_id) // empty
   ' <<<"$status")
   if [[ -n $paused_stream_id ]]; then
     paused_sequence=$(jq -r --argjson node_id "$paused_stream_id" '
@@ -333,7 +434,7 @@ monitor_status=0
 "${private_env[@]}" "$loudnessd" monitor \
   --duration "$duration" \
   --interval 1000 \
-  --expect-active 2 \
+  --expect-active "$expected_active" \
   --output "$output" || monitor_status=$?
 
 if ! wait "$top_pid"; then
@@ -346,7 +447,7 @@ mapfile -t filter_ids < <(awk '
   $2 ~ /^[0-9]+$/ && $NF == "loudnessd" { ids[$2] = 1 }
   END { for (node_id in ids) print node_id }
 ' "$top_output")
-if (( ${#filter_ids[@]} != 2 )); then
+if (( ${#filter_ids[@]} != expected_active )); then
   echo "isolated loudnessd filters are missing from the profiler timeline" >&2
   exit 1
 fi

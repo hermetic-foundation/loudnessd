@@ -225,6 +225,9 @@ application stream remained alive. The harness verified all of the following:
 - restoring valid TOML and reloading resumed healthy normalization;
 - subsequent sink replacement and same-node pause/resume recovered without a
   daemon restart during the monitored interval; and
+- restarting the private WirePlumber policy manager caused one delayed policy
+  relink; loudnessd detected it, recovered to a stable healthy route, and kept
+  the application stream alive; and
 - clean `SIGTERM` shutdown exited successfully with both direct links intact
   and no filter node or recovery journal remaining.
 
@@ -242,9 +245,9 @@ of one core. The complete application control and target invariants also held.
 - Exercise a real browser pause and resume. The synthetic node-command case now
   passes, but feeding zero-valued samples is not equivalent and browser graph
   policy still needs direct integration evidence.
-- Complete the remaining lifecycle matrix: PipeWire and WirePlumber restart,
-  source-device change and reconnection, application exit during route
-  transitions, and system suspend/resume.
+- Complete the remaining lifecycle matrix: PipeWire restart, source-device
+  change and reconnection, application exit during route transitions, and
+  system suspend/resume.
 
 ## Failed extended soak
 

@@ -210,7 +210,8 @@ impl RouteBackend for PipewireRouteBackend<'_> {
     }
 
     fn destroy_links(&mut self, links: Self::LinkSet) {
-        links.destroy_globals(self.registry);
+        // Replacement links are client-owned proxies; dropping them removes the globals.
+        links.destroy();
     }
 }
 

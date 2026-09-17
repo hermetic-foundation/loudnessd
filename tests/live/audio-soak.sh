@@ -178,18 +178,30 @@ if [[ ! -S $test_runtime/pipewire-0 ]]; then
   exit 1
 fi
 
-"${private_env[@]}" "$wireplumber" --profile policy >"$wireplumber_log" 2>&1 &
-wireplumber_pid=$!
-for _ in {1..50}; do
-  if "${private_env[@]}" pw-cli info 0 >/dev/null 2>&1; then
-    break
-  fi
-  if ! kill -0 "$wireplumber_pid" 2>/dev/null; then
-    echo "private WirePlumber exited during startup" >&2
-    exit 1
-  fi
-  sleep 0.1
-done
+start_wireplumber() {
+  "${private_env[@]}" "$wireplumber" --profile policy >>"$wireplumber_log" 2>&1 &
+  wireplumber_pid=$!
+}
+
+wait_for_wireplumber() {
+  for _ in {1..50}; do
+    if "${private_env[@]}" wpctl status >/dev/null 2>&1; then
+      return 0
+    fi
+    if ! kill -0 "$wireplumber_pid" 2>/dev/null; then
+      return 1
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+: >"$wireplumber_log"
+start_wireplumber
+if ! wait_for_wireplumber; then
+  echo "private WirePlumber did not become ready" >&2
+  exit 1
+fi
 
 start_daemon() {
   "${private_env[@]}" "$loudnessd" --daemon --config "$test_config" >>"$daemon_log" 2>&1 &
@@ -342,6 +354,39 @@ wait_for_healthy_routes() {
     ' >/dev/null 2>&1 <<<"$status"; then
       mapfile -t fixture_ids < <(jq -r '.streams[].node_id' <<<"$status")
       return 0
+    fi
+    if [[ -n $daemon_pid ]] && ! kill -0 "$daemon_pid" 2>/dev/null; then
+      return 1
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_for_stable_healthy_routes() {
+  local previous_routes=
+  local stable_observations=0
+  local current_routes=
+  for _ in {1..150}; do
+    status=$("${private_env[@]}" "$loudnessd" msg status-json 2>/dev/null || true)
+    if jq -e --argjson expected "$expected_active" '
+      .enabled and .active == $expected and .managed == $expected and .skipped == 0 and
+      all(.streams[]; .route == "healthy")
+    ' >/dev/null 2>&1 <<<"$status"; then
+      current_routes=$(jq -c '[.streams[] | [.node_id, .filter_node_id]] | sort' <<<"$status")
+      if [[ $current_routes == "$previous_routes" ]]; then
+        stable_observations=$((stable_observations + 1))
+      else
+        previous_routes=$current_routes
+        stable_observations=1
+      fi
+      if (( stable_observations >= 20 )); then
+        mapfile -t fixture_ids < <(jq -r '.streams[].node_id' <<<"$status")
+        return 0
+      fi
+    else
+      previous_routes=
+      stable_observations=0
     fi
     if [[ -n $daemon_pid ]] && ! kill -0 "$daemon_pid" 2>/dev/null; then
       return 1
@@ -590,6 +635,7 @@ if [[ $mode == lifecycle ]]; then
     echo "valid reload did not restore normalization" >&2
     exit 1
   fi
+
 fi
 
 previous_sink_serial=$sink_serial
@@ -696,6 +742,18 @@ if [[ $resumed != true ]]; then
   save_startup_diagnostics
   echo "intermittent stream did not resume normalized processing" >&2
   exit 1
+fi
+
+if [[ $mode == lifecycle ]]; then
+  kill "$wireplumber_pid"
+  wait "$wireplumber_pid"
+  wireplumber_pid=
+  start_wireplumber
+  if ! wait_for_wireplumber || ! wait_for_stable_healthy_routes; then
+    save_startup_diagnostics
+    echo "lifecycle stream did not remain healthy after WirePlumber restart" >&2
+    exit 1
+  fi
 fi
 
 node_max_error() {

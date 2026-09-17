@@ -870,6 +870,46 @@ if [[ $mode == lifecycle ]]; then
     echo "application exit left managed state or a filter node behind" >&2
     exit 1
   fi
+
+  repeat_fixture "$lifecycle_fixture" 60 | "${private_env[@]}" pw-cat \
+    --playback --raw --target "$sink_name" \
+    --rate "$sample_rate" --channels "$channels" --channel-map "$channel_map" --format f32 \
+    --properties='application.id=loudnessd.soak.exiting application.name=Loudnessd-Soak-Exiting' - &
+  bypass_exit_pid=$!
+  stream_pids+=("$bypass_exit_pid")
+  if ! wait_for_active_count 2; then
+    save_startup_diagnostics
+    echo "bypass-exit lifecycle stream did not become healthy" >&2
+    exit 1
+  fi
+  disable_response=$test_runtime/disable-response
+  "${private_env[@]}" "$loudnessd" msg disable >"$disable_response" &
+  disable_pid=$!
+  kill "$bypass_exit_pid"
+  wait "$bypass_exit_pid" 2>/dev/null || true
+  if ! wait "$disable_pid" || [[ $(<"$disable_response") != ok ]] ||
+    ! wait_for_lifecycle_state false 0 0 ||
+    ! wait_for_application_removal loudnessd.soak.exiting ||
+    ! wait_for_filter_removal; then
+    save_startup_diagnostics
+    echo "application exit during bypass left managed state or a filter behind" >&2
+    exit 1
+  fi
+  if [[ $(direct_route_channel_count "$lifecycle_node_id") != "$channels" ]]; then
+    save_startup_diagnostics
+    echo "application exit during bypass did not restore the survivor's direct route" >&2
+    exit 1
+  fi
+  if [[ -e $recovery_journal ]]; then
+    echo "application exit during bypass left a recovery journal" >&2
+    exit 1
+  fi
+  response=$("${private_env[@]}" "$loudnessd" msg enable)
+  if [[ $response != ok ]] || ! wait_for_stable_healthy_routes; then
+    save_startup_diagnostics
+    echo "surviving stream did not normalize after bypass-exit recovery" >&2
+    exit 1
+  fi
 fi
 
 node_max_error() {

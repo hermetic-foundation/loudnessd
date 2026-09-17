@@ -3,8 +3,8 @@
 
 set -euo pipefail
 
-if (( $# < 6 || $# > 7 )); then
-  echo "usage: audio-soak.sh LOUDNESSD SOX PIPEWIRE WIREPLUMBER DURATION_SECONDS OUTPUT [playback|capture|lifecycle|limiter|memory]" >&2
+if (( $# < 6 || $# > 8 )); then
+  echo "usage: audio-soak.sh LOUDNESSD SOX PIPEWIRE WIREPLUMBER DURATION_SECONDS OUTPUT [playback|capture|lifecycle|limiter|memory] [SAMPLE_RATE]" >&2
   exit 2
 fi
 
@@ -15,6 +15,14 @@ wireplumber=$4
 duration=$5
 output=$6
 mode=${7:-playback}
+sample_rate=${8:-48000}
+case $sample_rate in
+  22050 | 32000 | 44100 | 48000 | 88200 | 96000 | 192000) ;;
+  *)
+    echo "unsupported sample rate: $sample_rate" >&2
+    exit 2
+    ;;
+esac
 case $mode in
   playback)
     expected_active=2
@@ -61,6 +69,7 @@ host_runtime=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR must be set}
 test_runtime=$(mktemp -d "$host_runtime/loudnessd-soak.XXXXXX")
 test_config=$test_runtime/config.toml
 client_config_dir=$test_runtime/config-home/pipewire/client.conf.d
+server_config_dir=$test_runtime/config-home/pipewire/pipewire.conf.d
 server_log=$output.pipewire-server.log
 wireplumber_log=$output.wireplumber.log
 daemon_log=$output.daemon.log
@@ -105,12 +114,17 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$client_config_dir"
+mkdir -p "$client_config_dir" "$server_config_dir"
 printf '%s\n' \
   'context.properties = {' \
   '  module.rt = false' \
   '  loop.rt-prio = 0' \
   '}' >"$client_config_dir/10-no-realtime.conf"
+printf '%s\n' \
+  'context.properties = {' \
+  "  default.clock.rate = $sample_rate" \
+  "  default.clock.allowed-rates = [ $sample_rate ]" \
+  '}' >"$server_config_dir/20-test-rate.conf"
 
 if [[ $mode == playback ]]; then
   printf '%s\n' \
@@ -488,9 +502,9 @@ fi
 generate_first_stream() {
   local output_file=$1
   {
-    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+    "$sox" -q -n -t raw -e floating-point -b 32 -L -r "$sample_rate" -c 2 - \
       synth 45 sine 220 sine 330 vol 0.035
-    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+    "$sox" -q -n -t raw -e floating-point -b 32 -L -r "$sample_rate" -c 2 - \
       synth 15 sine 220 sine 330 vol 0.003
   } >"$output_file"
 }
@@ -498,11 +512,11 @@ generate_first_stream() {
 generate_second_stream() {
   local output_file=$1
   {
-    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+    "$sox" -q -n -t raw -e floating-point -b 32 -L -r "$sample_rate" -c 2 - \
       synth 30 pinknoise vol 0.12
-    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+    "$sox" -q -n -t raw -e floating-point -b 32 -L -r "$sample_rate" -c 2 - \
       synth 10 sine 550 sine 770 vol 0
-    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+    "$sox" -q -n -t raw -e floating-point -b 32 -L -r "$sample_rate" -c 2 - \
       synth 20 sine 550 sine 770 vol 0.08
   } >"$output_file"
 }
@@ -510,9 +524,9 @@ generate_second_stream() {
 generate_limiter_stream() {
   local output_file=$1
   {
-    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+    "$sox" -q -n -t raw -e floating-point -b 32 -L -r "$sample_rate" -c 2 - \
       synth 0.998 sine 220 sine 330 vol 0.02
-    "$sox" -q -n -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+    "$sox" -q -n -t raw -e floating-point -b 32 -L -r "$sample_rate" -c 2 - \
       synth 0.002 sine 997 sine 997 vol 0.95
   } >"$output_file"
 }
@@ -524,8 +538,8 @@ repeat_fixture() {
   local cycles=$(((total_seconds + cycle_seconds - 1) / cycle_seconds))
   local repeats=$((cycles - 1))
   "$sox" -q \
-    -t raw -e floating-point -b 32 -L -r 48000 -c 2 "$input_file" \
-    -t raw -e floating-point -b 32 -L -r 48000 -c 2 - \
+    -t raw -e floating-point -b 32 -L -r "$sample_rate" -c 2 "$input_file" \
+    -t raw -e floating-point -b 32 -L -r "$sample_rate" -c 2 - \
     repeat "$repeats"
 }
 
@@ -536,12 +550,12 @@ if [[ $mode == playback ]]; then
   generate_second_stream "$second_fixture"
 
   repeat_fixture "$first_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
-    --rate 48000 --channels 2 --channel-map Stereo --format f32 \
+    --rate "$sample_rate" --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.continuous application.name=Loudnessd-Soak-Continuous' - &
   stream_pids+=("$!")
 
   repeat_fixture "$second_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
-    --rate 48000 --channels 2 --channel-map Stereo --format f32 \
+    --rate "$sample_rate" --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.intermittent application.name=Loudnessd-Soak-Intermittent' - &
   stream_pids+=("$!")
 elif [[ $mode == capture ]]; then
@@ -549,12 +563,12 @@ elif [[ $mode == capture ]]; then
   generate_second_stream "$second_fixture"
 
   repeat_fixture "$second_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
-    --rate 48000 --channels 2 --channel-map Stereo --format f32 \
+    --rate "$sample_rate" --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.duplex application.name=Loudnessd-Soak-Duplex' - &
   stream_pids+=("$!")
 
   "${private_env[@]}" pw-cat --record --raw --target 0 \
-    --rate 48000 --channels 2 --channel-map Stereo --format f32 \
+    --rate "$sample_rate" --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.duplex application.name=Loudnessd-Soak-Duplex' \
     /dev/null &
   stream_pids+=("$!")
@@ -569,7 +583,7 @@ elif [[ $mode == lifecycle ]]; then
   generate_first_stream "$lifecycle_fixture"
 
   repeat_fixture "$lifecycle_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
-    --rate 48000 --channels 2 --channel-map Stereo --format f32 \
+    --rate "$sample_rate" --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.lifecycle application.name=Loudnessd-Soak-Lifecycle' - &
   stream_pids+=("$!")
 elif [[ $mode == limiter ]]; then
@@ -577,7 +591,7 @@ elif [[ $mode == limiter ]]; then
   generate_limiter_stream "$limiter_fixture"
 
   repeat_fixture "$limiter_fixture" 1 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
-    --rate 48000 --channels 2 --channel-map Stereo --format f32 \
+    --rate "$sample_rate" --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.limiter application.name=Loudnessd-Soak-Limiter' - &
   stream_pids+=("$!")
 else
@@ -586,7 +600,7 @@ else
 
   for index in {0..7}; do
     repeat_fixture "$second_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --target "$sink_name" \
-      --rate 48000 --channels 2 --channel-map Stereo --format f32 \
+      --rate "$sample_rate" --channels 2 --channel-map Stereo --format f32 \
       --properties="application.id=loudnessd.soak.memory.$index application.name=Loudnessd-Soak-Memory-$index" - &
     stream_pids+=("$!")
   done
@@ -714,24 +728,7 @@ if [[ $mode == capture ]]; then
   link_capture_monitor
 fi
 
-recovered=false
-for _ in {1..100}; do
-  status=$("${private_env[@]}" "$loudnessd" msg status-json 2>/dev/null || true)
-  if jq -e --argjson expected "$expected_active" '
-    .active == $expected and .managed == $expected and .skipped == 0 and
-    all(.streams[]; .route == "healthy")
-  ' >/dev/null 2>&1 <<<"$status"; then
-    mapfile -t fixture_ids < <(jq -r '.streams[].node_id' <<<"$status")
-    recovered=true
-    break
-  fi
-  if ! kill -0 "$daemon_pid" 2>/dev/null; then
-    echo "candidate daemon exited during endpoint replacement" >&2
-    exit 1
-  fi
-  sleep 0.1
-done
-if [[ $recovered != true ]]; then
+if ! wait_for_stable_healthy_routes; then
   save_startup_diagnostics
   echo "streams did not recover after isolated sink replacement" >&2
   exit 1
@@ -800,6 +797,11 @@ if [[ $resumed != true ]]; then
   echo "intermittent stream did not resume normalized processing" >&2
   exit 1
 fi
+if ! wait_for_stable_healthy_routes; then
+  save_startup_diagnostics
+  echo "routes did not stabilize after the pause probe" >&2
+  exit 1
+fi
 
 if [[ $mode == lifecycle ]]; then
   kill "$wireplumber_pid"
@@ -814,7 +816,7 @@ if [[ $mode == lifecycle ]]; then
 
   repeat_fixture "$lifecycle_fixture" 60 | "${private_env[@]}" pw-cat \
     --playback --raw --target "$sink_name" \
-    --rate 48000 --channels 2 --channel-map Stereo --format f32 \
+    --rate "$sample_rate" --channels 2 --channel-map Stereo --format f32 \
     --properties='application.id=loudnessd.soak.exiting application.name=Loudnessd-Soak-Exiting' - &
   exiting_pid=$!
   stream_pids+=("$exiting_pid")

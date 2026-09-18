@@ -10,7 +10,7 @@
 
 rustPlatform.buildRustPackage {
   pname = "loudnessd";
-  version = "0.1.0";
+  version = "0.1.1";
   src = lib.fileset.toSource {
     root = ./.;
     fileset = lib.fileset.unions [

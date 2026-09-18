@@ -25,6 +25,28 @@ must never compensate for master output gain: changing master volume should
 preserve stream balance while applying the system volume curve to the complete
 mix.
 
+### Source layout
+
+The Rust tree follows subsystem ownership rather than implementation type:
+
+- `normalization` owns policy, controller state, per-stream control, metering,
+  gain, and true-peak DSP;
+- `pipewire` owns graph discovery, native filters, and transactional routing;
+- `daemon` owns orchestration, discovery policy, recovery coordination,
+  reporting, process metrics, and runtime configuration overlays; and
+- `ipc`, `status`, and `monitor` remain at the crate root because they form the
+  shared control-plane contract used by both the daemon and CLI clients.
+
+`normalization::control` intentionally keeps its configuration, policy,
+controller, and controller-bank types together. Their production implementation
+is compact, configuration updates are validated and applied transactionally,
+and splitting them would introduce cross-module coupling without creating a new
+ownership boundary.
+
+The crate root retains the module paths exported by `v0.1.0` as compatibility
+re-exports. New internal code uses the nested canonical paths, while downstream
+users can migrate without a patch-release API break.
+
 ## PipeWire backend
 
 The daemon uses native PipeWire filters rather than recording monitor streams

@@ -184,6 +184,33 @@ if [[ $mode == playback ]]; then
     '    }' \
     '  }' \
     ']' >"$server_config_dir/11-playback-loopbacks.conf"
+elif [[ $mode == memory ]]; then
+  {
+    printf '%s\n' 'context.modules = ['
+    for index in {0..7}; do
+      printf '%s\n' \
+        '  { name = libpipewire-module-loopback' \
+        '    args = {' \
+        "      audio.position = $audio_position" \
+        '      capture.props = {' \
+        "        node.name = loudnessd-soak-transport-memory-$index" \
+        '        media.class = Stream/Input/Audio/Internal' \
+        "        target.object = loudnessd-soak-source-memory-$index" \
+        '        node.passive = true' \
+        '      }' \
+        '      playback.props = {' \
+        "        node.name = loudnessd-soak-playback-memory-$index" \
+        '        media.class = Stream/Output/Audio' \
+        "        application.id = loudnessd.soak.memory.$index" \
+        "        application.name = Loudnessd-Soak-Memory-$index" \
+        "        target.object = $sink_name" \
+        '        node.passive = false' \
+        '      }' \
+        '    }' \
+        '  }'
+    done
+    printf '%s\n' ']'
+  } >"$server_config_dir/11-memory-loopbacks.conf"
 fi
 printf '%s\n' \
   'context.properties = {' \
@@ -751,6 +778,13 @@ create_realtime_sources() {
   create_realtime_source intermittent 550.0 0.12
 }
 
+create_memory_realtime_sources() {
+  local index
+  for index in {0..7}; do
+    create_realtime_source "memory-$index" "$((220 + index * 55)).0" 0.08
+  done
+}
+
 suspend_realtime_fixture_graph() {
   local node_id
   for node_id in "${fixture_transport_ids[@]}" "${fixture_ids[@]}" "$sink_id"; do
@@ -806,15 +840,10 @@ elif [[ $mode == limiter ]]; then
     --properties='application.id=loudnessd.soak.limiter application.name=Loudnessd-Soak-Limiter' - &
   stream_pids+=("$!")
 else
-  second_fixture=$test_runtime/second-stream.raw
-  generate_second_stream "$second_fixture"
-
   for index in {0..7}; do
-    repeat_fixture "$second_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --latency 500ms --target "$sink_name" \
-      --rate "$sample_rate" --channels "$channels" --channel-map "$channel_map" --format f32 \
-      --properties="application.id=loudnessd.soak.memory.$index application.name=Loudnessd-Soak-Memory-$index" - &
-    stream_pids+=("$!")
+    create_realtime_playback_fixture "memory-$index"
   done
+  create_memory_realtime_sources
 fi
 
 ready=false
@@ -970,7 +999,7 @@ if [[ $mode == lifecycle ]]; then
 fi
 
 previous_sink_serial=$sink_serial
-if [[ $mode == playback ]]; then
+if [[ $mode == playback || $mode == memory ]]; then
   destroy_realtime_sources
 fi
 "${private_env[@]}" pw-cli destroy "$sink_id"
@@ -993,6 +1022,10 @@ fi
 if [[ $mode == playback ]]; then
   suspend_realtime_fixture_graph
   create_realtime_sources
+  start_realtime_fixture_graph
+elif [[ $mode == memory ]]; then
+  suspend_realtime_fixture_graph
+  create_memory_realtime_sources
   start_realtime_fixture_graph
 fi
 
@@ -1266,14 +1299,10 @@ check_profiler_node() {
   fi
 }
 
-fixture_errors_enforced=true
-if [[ $mode == memory ]]; then
-  fixture_errors_enforced=false
-fi
 for node_id in "${fixture_ids[@]}"; do
-  check_profiler_node "$node_id" fixture "$fixture_errors_enforced"
+  check_profiler_node "$node_id" fixture true
 done
-if [[ $mode == playback ]]; then
+if [[ $mode == playback || $mode == memory ]]; then
   for node_id in "${fixture_source_ids[@]}"; do
     check_profiler_node "$node_id" fixture-source true
   done

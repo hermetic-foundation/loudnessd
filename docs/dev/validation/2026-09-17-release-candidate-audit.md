@@ -7,7 +7,7 @@ In progress. This audit applies the objective criteria in
 not declare the project stable while any required evidence below remains open.
 
 - Functional package revision: `6680c9fba550`
-- Evidence-contract `main`: `3c8388a3ab88`
+- Evidence-contract `main`: `4c698f3cff4c`
 - Functional package closure:
   `/nix/store/az3y42gva3y9vy1x73i8x4zfrfy2p5vm-loudnessd-0.1.0`
 - Host: `midi-desktop-1`, x86_64 Linux 6.18.51
@@ -109,6 +109,35 @@ evidence but do not replace the final 30-minute terminal run. Commit
 5% single-core budget, and commit `3c8388a3ab88` implements the bounded
 resource-memory window.
 
+The terminal bounded playback qualification completed 1,800,000 ms and 1,776
+observations with exactly two active streams throughout. It reported zero IPC
+failures, daemon restarts, active-stream shortfalls, skipped streams, unhealthy
+routes, and stalled callbacks. All 645 eligible convergence observations passed,
+the maximum output peak was -1.096 dBTP, average daemon CPU was 3.74% of one
+core, and RSS remained exactly 8,966,144 bytes. Every enforced profiler counter
+had zero growth, all private-service logs had zero growth, and fixture controls
+and targets were preserved. Its artifacts use the prefix
+`playback-soak-30m-current-9e8477bc-1789738409`.
+
+The first bounded resource attempt completed its functional and memory monitor
+but was rejected because the private PipeWire profiler, which was still
+sampling every graph quantum, overflowed its own client queue and logged 1,815
+bytes. No loudnessd node error counter increased. Commits `f92784793477` and
+`64e65f389d2f` set the private profiler to the same one-second cadence that
+`pw-top` emits, avoiding observer-induced load while retaining cumulative error
+counters for every interval.
+
+The replacement resource qualification on `64e65f389d2f` completed 1,800,000 ms
+and 1,795 observations with exactly eight active stereo streams throughout. It
+reported zero IPC failures, daemon restarts, active-stream shortfalls, skipped
+streams, unhealthy routes, and stalled callbacks. Peak, initial, final, and
+minute-10 warm RSS were all 14,360,576 bytes, so both total and post-warmup
+growth were zero. Every source, transport, application, filter, and sink
+profiler counter had zero growth; daemon, PipeWire, and WirePlumber logs had
+zero growth; fixture controls and targets were preserved; and cleanup left no
+private runtime or process. Its artifacts use the prefix
+`resource-soak-30m-final-64e65f38-1789760547`.
+
 ## Capture isolation
 
 | Gate | State | Evidence |
@@ -169,11 +198,10 @@ therefore requires a manual keyboard or power-button wake.
 
 ## Local completion blockers
 
-1. Complete and accept the final 30-minute playback and resource soaks.
-2. Pass controlled suspend/resume.
-3. Activate the built personal NixOS closure and verify the packaged service,
+1. Pass controlled suspend/resume.
+2. Activate the built personal NixOS closure and verify the packaged service,
    immutable config, route health, and desktop playback/capture behavior.
-4. Re-run this audit against final local `main` and resolve every high-severity
+3. Re-run this audit against final local `main` and resolve every high-severity
    local defect.
 
 ## Deferred external release gates

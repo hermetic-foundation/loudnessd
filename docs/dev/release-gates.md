@@ -79,7 +79,7 @@ remain after cleanup.
 ## Compatibility and fail-open behavior
 
 - Mono and stereo planar floating-point playback and capture pass live tests at
-  every sample rate supported by the test devices.
+  every sample rate supported by both loudnessd and the selected test devices.
 - Ambiguous, unsupported, or multichannel topology is left on its original
   direct route and reports a specific persistent reason through both text and
   JSON status.

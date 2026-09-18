@@ -228,15 +228,18 @@ reloads the user's ordinary PipeWire or loudnessd services.
 `tests/live/hardware-rate-matrix.sh` complements the private graph with an
 explicit physical-device check. It takes PipeWire target names and readable
 `/proc/asound/card*/stream*` files rather than embedding a host's device names.
-For every requested rate it forces the live graph clock, starts a disposable
-playback or capture client, and requires all of the following:
+The running PipeWire core must be started with every requested rate in
+`default.clock.allowed-rates`; metadata cannot widen that startup capability.
+For every requested rate the harness forces the live graph clock, starts a
+disposable playback or capture client, and requires all of the following:
 
 - the graph and physical USB clock match the requested rate;
 - loudnessd installs a healthy streaming route and its meter sequence advances;
 - the application stream's complete `Props` control state remains unchanged;
 - the temporary managed route disappears after the client exits; and
-- the original forced-rate setting and every still-live pre-existing managed
-  route recover before the harness reports success.
+- the original allowed-rate list remains unchanged, the forced-rate setting is
+  restored, and every still-live pre-existing managed route recovers before
+  the harness reports success.
 
 For example, with explicit output and input targets:
 
@@ -245,7 +248,7 @@ tests/live/hardware-rate-matrix.sh \
   "$(command -v loudnessd)" "$(command -v sox)" ./hardware-rate \
   OUTPUT_NODE /proc/asound/cardN/stream0 \
   INPUT_NODE /proc/asound/cardM/stream0 \
-  44100,48000,88200,96000,176400,192000 \
+  44100,48000,88200,96000,192000 \
   44100,48000,88200,96000
 ```
 

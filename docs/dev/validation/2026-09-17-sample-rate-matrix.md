@@ -78,10 +78,32 @@ hardware at those formats.
 
 Read-only format inspection found that the default USB output advertises a
 44.1-192 kHz range and the Scarlett capture driver advertises a 44.1-96 kHz
-range. These tests did not change the active desktop graph or hardware clock.
-They qualify the private stereo DSP paths at those rates, not physical-device
-continuity.
+range. The output exposes 176.4 and 192 kHz only through its 16-bit alternate
+interface; its default 24-bit interface stops at 96 kHz. The current meter
+backend does not support 176.4 kHz, so loudnessd deliberately fails open at
+that rate rather than claiming normalization.
 
-Physical-device tests at every advertised rate remain a release requirement.
-Those tests must be scheduled when changing the desktop graph cannot interrupt
-an active audio session.
+## Physical-device qualification
+
+The physical matrix ran against PipeWire 1.6.8 on the same date. A temporary
+WirePlumber rule selected the USB output's 16-bit alternate interface for the
+192 kHz case. The rule and the temporary PipeWire allowed-rate startup override
+were removed after the run.
+
+| Domain | Qualified hardware rates |
+| --- | --- |
+| USB HIFI playback | 44.1, 48, 88.2, 96, and 192 kHz |
+| Scarlett Solo capture | 44.1, 48, 88.2, and 96 kHz |
+
+At every rate, the disposable application's negotiated `node.rate` and the
+physical USB clock in `/proc/asound/card*/stream*` matched the requested rate.
+Each loudnessd filter reached `streaming`, retained a healthy route, and
+advanced its meter sequence. The complete application `Props` control state
+was unchanged, temporary routes disappeared after client exit, and the prior
+forced-rate setting and runtime policy were restored. The retained summary is
+`hardware-rate-matrix-supported-1789700372.summary.json` in the local
+validation artifact directory.
+
+This qualifies physical-device continuity at every rate supported by both the
+current loudnessd meter backend and these devices. It does not expand
+loudnessd's documented fail-open behavior at 176.4 kHz.

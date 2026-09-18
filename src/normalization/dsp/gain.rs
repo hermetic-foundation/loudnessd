@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-use crate::true_peak::TruePeakDetector;
+use super::true_peak::TruePeakDetector;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GainStage {

@@ -2,12 +2,10 @@
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
-pub mod control;
 pub mod daemon;
-pub mod gain;
 pub mod ipc;
-pub mod meter;
 pub mod monitor;
+pub mod normalization;
 pub mod pipewire_backend;
 pub mod pipewire_filter;
 pub mod pipewire_links;
@@ -18,10 +16,10 @@ pub mod route_transaction;
 pub mod routing;
 pub mod runtime_config;
 pub mod status;
-pub mod stream_control;
-mod true_peak;
 
-pub use control::{
+// Compatibility exports for the v0.1 public module paths.
+pub use normalization::control::{
     ApplicationPolicy, ApplicationPolicyOverride, Controller, ControllerBank, ControllerConfig,
     ControllerConfigOverride, Decision, Observation, SignalDomain, StreamState, UserConfig,
 };
+pub use normalization::{control, gain, meter, stream_control};

@@ -10,7 +10,7 @@ use ebur128_stream::Channel;
 use pipewire::sys;
 
 use super::{MeterSnapshot, PortDirection};
-use crate::{
+use crate::normalization::dsp::{
     gain::{GainStage, TruePeakLimiter},
     meter::{LoudnessMeter, MeterReading},
 };

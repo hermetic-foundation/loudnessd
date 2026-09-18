@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::{ApplicationPolicyOverride, SignalDomain, UserConfig};
+use crate::normalization::{ApplicationPolicyOverride, SignalDomain, UserConfig};
 
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {

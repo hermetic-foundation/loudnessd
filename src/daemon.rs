@@ -17,8 +17,8 @@ use pipewire::{context::ContextRc, loop_::Timeout, main_loop::MainLoopRc};
 use signal_hook::consts::signal::{SIGINT, SIGTERM};
 
 use crate::{
-    ControllerBank, SignalDomain, UserConfig,
     ipc::{ControlServer, write_response},
+    normalization::{ControllerBank, SignalDomain, UserConfig, stream::StreamControl},
     pipewire_backend::{DiscoveredStream, GraphState, track_graph},
     pipewire_filter::{ConnectedFilter, PortDirection, UnconnectedFilter},
     pipewire_links::OwnedLinks,
@@ -28,7 +28,6 @@ use crate::{
     routing::{RouteHealth, RoutePlanError, plan_route, route_health},
     runtime_config::RuntimeConfig,
     status::{DaemonStatus, SkippedStreamStatus},
-    stream_control::StreamControl,
 };
 
 mod command;

@@ -15,7 +15,7 @@ use pipewire::{
     types::ObjectType,
 };
 
-use crate::SignalDomain;
+use crate::normalization::SignalDomain;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DiscoveredStream {

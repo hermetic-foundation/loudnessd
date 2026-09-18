@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::SignalDomain;
+use crate::normalization::SignalDomain;
 
 pub(super) const USAGE: &str = "usage: loudnessd msg status|status-json|reload|enable|disable|set APP playback|capture on|off|reset APP|export";
 

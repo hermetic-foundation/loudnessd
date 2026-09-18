@@ -10,7 +10,7 @@ use super::{
     },
     *,
 };
-use crate::{gain::GainStage, meter::MeterReading};
+use crate::normalization::dsp::{gain::GainStage, meter::MeterReading};
 
 #[test]
 fn maps_every_known_filter_state() {

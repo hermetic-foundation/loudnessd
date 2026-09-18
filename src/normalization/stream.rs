@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::{
-    ControllerBank, Decision, Observation, SignalDomain,
-    pipewire_filter::{ConnectedFilter, MeterSnapshot},
-};
+use super::{ControllerBank, Decision, Observation, SignalDomain};
+use crate::pipewire_filter::{ConnectedFilter, MeterSnapshot};
 
 pub trait NormalizationEndpoint {
     fn latest_meter_snapshot(&self) -> Option<MeterSnapshot>;
@@ -104,7 +102,7 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
-    use crate::ApplicationPolicy;
+    use crate::normalization::ApplicationPolicy;
 
     #[derive(Default)]
     struct FakeEndpoint {

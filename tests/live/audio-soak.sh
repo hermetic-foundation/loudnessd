@@ -72,6 +72,9 @@ esac
 sink_name="loudnessd-soak-sink"
 daemon_pid=
 stream_pids=()
+fixture_source_ids=()
+fixture_source_names=()
+fixture_transport_ids=()
 sink_id=
 sink_serial=
 capture_node_id=
@@ -130,6 +133,10 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 mkdir -p "$server_config_dir"
+printf '%s\n' \
+  'context.spa-libs = {' \
+  '  audiotestsrc = audiotestsrc/libspa-audiotestsrc' \
+  '}' >"$server_config_dir/10-audiotestsrc.conf"
 printf '%s\n' \
   'context.properties = {' \
   "  default.clock.rate = $sample_rate" \
@@ -571,21 +578,172 @@ repeat_fixture() {
     repeat "$repeats"
 }
 
+wait_for_named_node() {
+  local node_name=$1
+  local node_id=
+  for _ in {1..50}; do
+    node_id=$("${private_env[@]}" pw-dump | jq -r --arg name "$node_name" '
+      first(.[] | select(
+        .type == "PipeWire:Interface:Node" and
+        .info.props["node.name"]? == $name
+      ) | .id) // empty
+    ')
+    if [[ -n $node_id ]]; then
+      printf '%s\n' "$node_id"
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+create_realtime_source() {
+  local fixture_name=$1
+  local frequency=$2
+  local initial_volume=$3
+  local source_name="loudnessd-soak-source-$fixture_name"
+  local source_id
+
+  "${private_env[@]}" pw-cli create-node adapter "{
+    factory.name = audiotestsrc
+    node.name = $source_name
+    node.description = \"loudnessd soak source $fixture_name\"
+    media.class = Audio/Source
+    object.linger = true
+    node.always-process = true
+    node.param.Props = {
+      live = true
+      waveType = 0
+      frequency = $frequency
+      volume = $initial_volume
+    }
+    audio.position = $audio_position
+  }" >/dev/null
+  source_id=$(wait_for_named_node "$source_name")
+  fixture_source_ids+=("$source_id")
+  fixture_source_names+=("$source_name")
+}
+
+create_realtime_playback_fixture() {
+  local fixture_name=$1
+  local application_id=$2
+  local application_name=$3
+  local source_name="loudnessd-soak-source-$fixture_name"
+  local capture_name="loudnessd-soak-transport-$fixture_name"
+  local playback_name="loudnessd-soak-playback-$fixture_name"
+  local capture_id
+
+  "${private_env[@]}" pw-loopback \
+    --name "loudnessd-soak-loopback-$fixture_name" \
+    --channels "$channels" \
+    --channel-map "$channel_map" \
+    --latency 100 \
+    --capture "$source_name" \
+    --playback "$sink_name" \
+    --capture-props "{
+      node.name = $capture_name
+      media.class = Stream/Input/Audio/Internal
+      node.passive = true
+    }" \
+    --playback-props "{
+      node.name = $playback_name
+      media.class = Stream/Output/Audio
+      application.id = $application_id
+      application.name = $application_name
+      node.passive = false
+    }" >/dev/null 2>&1 &
+  stream_pids+=("$!")
+  capture_id=$(wait_for_named_node "$capture_name")
+  fixture_transport_ids+=("$capture_id")
+}
+
+set_realtime_source() {
+  local source_name=$1
+  local wave_type=$2
+  local volume=$3
+  local source_id
+  while true; do
+    source_id=$(wait_for_named_node "$source_name" || true)
+    if [[ -n $source_id ]] && "${private_env[@]}" pw-cli set-param "$source_id" Props \
+      "{ live = true, waveType = $wave_type, volume = $volume }" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+}
+
+control_continuous_source() {
+  local source_name=$1
+  while true; do
+    set_realtime_source "$source_name" 0 0.035
+    sleep 20
+    set_realtime_source "$source_name" 1 1.0
+    sleep 20
+    set_realtime_source "$source_name" 0 0.003
+    sleep 20
+  done
+}
+
+control_intermittent_source() {
+  local source_name=$1
+  while true; do
+    set_realtime_source "$source_name" 1 0.12
+    sleep 20
+    set_realtime_source "$source_name" 0 0.0
+    sleep 10
+    set_realtime_source "$source_name" 0 0.08
+    sleep 15
+    set_realtime_source "$source_name" 1 1.0
+    sleep 15
+  done
+}
+
+destroy_realtime_sources() {
+  local source_id
+  local source_serial
+  for source_id in "${fixture_source_ids[@]}"; do
+    source_serial=$("${private_env[@]}" pw-dump | jq -r --argjson node_id "$source_id" '
+      first(.[] | select(.id == $node_id) | .info.props["object.serial"]) // empty
+    ')
+    "${private_env[@]}" pw-cli destroy "$source_id"
+    for _ in {1..50}; do
+      if ! "${private_env[@]}" pw-dump | jq -e --arg serial "$source_serial" '
+        any(.[]; (.info.props["object.serial"]? | tostring) == $serial)
+      ' >/dev/null; then
+        break
+      fi
+      sleep 0.1
+    done
+  done
+  fixture_source_ids=()
+  fixture_source_names=()
+}
+
+create_realtime_sources() {
+  create_realtime_source continuous 220.0 0.035
+  create_realtime_source intermittent 550.0 0.12
+}
+
+suspend_realtime_fixture_graph() {
+  local node_id
+  for node_id in "${fixture_transport_ids[@]}" "${fixture_ids[@]}" "$sink_id"; do
+    "${private_env[@]}" pw-cli send-command "$node_id" Suspend '{}' >/dev/null 2>&1 || true
+  done
+  sleep 1
+}
+
+start_realtime_fixture_graph() {
+  local node_id
+  for node_id in "${fixture_source_ids[@]}" "${fixture_transport_ids[@]}" "${fixture_ids[@]}" "$sink_id"; do
+    "${private_env[@]}" pw-cli send-command "$node_id" Start '{}' >/dev/null 2>&1 || true
+  done
+}
+
 if [[ $mode == playback ]]; then
-  first_fixture=$test_runtime/first-stream.raw
-  second_fixture=$test_runtime/second-stream.raw
-  generate_first_stream "$first_fixture"
-  generate_second_stream "$second_fixture"
-
-  repeat_fixture "$first_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --latency 500ms --target "$sink_name" \
-    --rate "$sample_rate" --channels "$channels" --channel-map "$channel_map" --format f32 \
-    --properties='application.id=loudnessd.soak.continuous application.name=Loudnessd-Soak-Continuous' - &
-  stream_pids+=("$!")
-
-  repeat_fixture "$second_fixture" 60 | "${private_env[@]}" pw-cat --playback --raw --latency 500ms --target "$sink_name" \
-    --rate "$sample_rate" --channels "$channels" --channel-map "$channel_map" --format f32 \
-    --properties='application.id=loudnessd.soak.intermittent application.name=Loudnessd-Soak-Intermittent' - &
-  stream_pids+=("$!")
+  create_realtime_playback_fixture \
+    continuous loudnessd.soak.continuous Loudnessd-Soak-Continuous
+  create_realtime_playback_fixture \
+    intermittent loudnessd.soak.intermittent Loudnessd-Soak-Intermittent
 elif [[ $mode == capture ]]; then
   second_fixture=$test_runtime/second-stream.raw
   generate_second_stream "$second_fixture"
@@ -656,6 +814,16 @@ if [[ $ready != true ]]; then
   save_startup_diagnostics
   echo "isolated $mode soak streams did not become active" >&2
   exit 1
+fi
+
+if [[ $mode == playback ]]; then
+  suspend_realtime_fixture_graph
+  create_realtime_sources
+  start_realtime_fixture_graph
+  control_continuous_source "${fixture_source_names[0]}" &
+  stream_pids+=("$!")
+  control_intermittent_source "${fixture_source_names[1]}" &
+  stream_pids+=("$!")
 fi
 
 for index in "${!fixture_ids[@]}"; do
@@ -738,6 +906,9 @@ if [[ $mode == lifecycle ]]; then
 fi
 
 previous_sink_serial=$sink_serial
+if [[ $mode == playback ]]; then
+  destroy_realtime_sources
+fi
 "${private_env[@]}" pw-cli destroy "$sink_id"
 sink_id=
 sink_serial=
@@ -754,6 +925,11 @@ if ! wait_for_sink "$previous_sink_serial"; then
 fi
 if [[ $mode == capture ]]; then
   link_capture_monitor
+fi
+if [[ $mode == playback ]]; then
+  suspend_realtime_fixture_graph
+  create_realtime_sources
+  start_realtime_fixture_graph
 fi
 
 if ! wait_for_stable_healthy_routes; then
@@ -1033,6 +1209,15 @@ fi
 for node_id in "${fixture_ids[@]}"; do
   check_profiler_node "$node_id" fixture "$fixture_errors_enforced"
 done
+if [[ $mode == playback ]]; then
+  for node_id in "${fixture_source_ids[@]}"; do
+    check_profiler_node "$node_id" fixture-source true
+  done
+  for node_id in "${fixture_transport_ids[@]}"; do
+    check_profiler_node "$node_id" fixture-transport true
+  done
+  check_profiler_node "$sink_id" fixture-sink true
+fi
 for node_id in "${filter_ids[@]}"; do
   check_profiler_node "$node_id" filter true
 done

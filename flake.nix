@@ -145,10 +145,13 @@
             pkgs.runCommand "loudnessd-shellcheck"
               {
                 nativeBuildInputs = [ pkgs.shellcheck ];
-                harness = ./tests/live/audio-soak.sh;
+                harnesses = [
+                  ./tests/live/audio-soak.sh
+                  ./tests/live/hardware-rate-matrix.sh
+                ];
               }
               ''
-                shellcheck "$harness"
+                shellcheck $harnesses
                 touch "$out"
               '';
           portable-systemd =

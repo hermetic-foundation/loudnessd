@@ -4,7 +4,7 @@
 set -euo pipefail
 
 if (( $# < 6 || $# > 9 )); then
-  echo "usage: audio-soak.sh LOUDNESSD SOX PIPEWIRE WIREPLUMBER DURATION_SECONDS OUTPUT [playback|capture|lifecycle|limiter|memory] [SAMPLE_RATE] [CHANNELS]" >&2
+  echo "usage: audio-soak.sh LOUDNESSD SOX PIPEWIRE WIREPLUMBER DURATION_SECONDS OUTPUT [playback|capture|disconnect|lifecycle|limiter|memory] [SAMPLE_RATE] [CHANNELS]" >&2
   exit 2
 fi
 
@@ -50,6 +50,11 @@ case $mode in
     pause_domain=capture
     ;;
   lifecycle)
+    expected_active=1
+    pause_application=loudnessd.soak.lifecycle
+    pause_domain=playback
+    ;;
+  disconnect)
     expected_active=1
     pause_application=loudnessd.soak.lifecycle
     pause_domain=playback
@@ -208,7 +213,7 @@ elif [[ $mode == capture ]]; then
     '[applications."loudnessd.soak.duplex"]' \
     'playback = true' \
     'capture = true' >"$test_config"
-elif [[ $mode == lifecycle ]]; then
+elif [[ $mode == lifecycle || $mode == disconnect ]]; then
   printf '%s\n' \
     '[defaults]' \
     'playback = false' \
@@ -784,7 +789,7 @@ elif [[ $mode == capture ]]; then
     exit 1
   fi
   link_capture_monitor
-elif [[ $mode == lifecycle ]]; then
+elif [[ $mode == lifecycle || $mode == disconnect ]]; then
   lifecycle_fixture=$test_runtime/lifecycle-stream.raw
   generate_first_stream "$lifecycle_fixture"
 
@@ -860,6 +865,45 @@ sleep 1
 for node_id in "${fixture_ids[@]}"; do
   baseline_controls[$node_id]=$(stream_control_state "$node_id")
 done
+
+if [[ $mode == disconnect ]]; then
+  kill -TERM "$pipewire_pid"
+  wait "$pipewire_pid" 2>/dev/null || true
+  pipewire_pid=
+
+  daemon_exited=false
+  for _ in {1..100}; do
+    daemon_state=$(awk '{ print $3 }' "/proc/$daemon_pid/stat" 2>/dev/null || true)
+    if [[ -z $daemon_state || $daemon_state == Z ]]; then
+      daemon_exited=true
+      break
+    fi
+    sleep 0.1
+  done
+  if [[ $daemon_exited != true ]]; then
+    kill -KILL "$daemon_pid" 2>/dev/null || true
+    wait "$daemon_pid" 2>/dev/null || true
+    daemon_pid=
+    echo "candidate daemon did not exit after the private PipeWire server disconnected" >&2
+    exit 1
+  fi
+
+  set +e
+  wait "$daemon_pid"
+  daemon_status=$?
+  set -e
+  daemon_pid=
+  if (( daemon_status != 1 )); then
+    echo "candidate daemon exited with status $daemon_status after PipeWire disconnected; expected 1" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'PipeWire connection failed:' "$daemon_log"; then
+    echo "candidate daemon did not report the fatal PipeWire disconnect" >&2
+    exit 1
+  fi
+  echo "private PipeWire disconnect exited cleanly"
+  exit 0
+fi
 
 if [[ $mode == lifecycle ]]; then
   lifecycle_node_id=${fixture_ids[0]}

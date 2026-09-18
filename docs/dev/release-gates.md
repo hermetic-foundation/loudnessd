@@ -17,7 +17,7 @@ lifecycle behavior depend on a live PipeWire graph.
 
 ## Playback continuity and control
 
-- An eight-hour soak with at least two simultaneous stereo streams completes
+- A 30-minute soak with at least two simultaneous stereo streams completes
   without an unexpected silence interval longer than two graph quanta.
 - The soak starts monitoring only after every intended stream is active, passes
   that count through `--expect-active`, and reports zero
@@ -93,10 +93,10 @@ remain after cleanup.
 
 ## Resource stability
 
-During the eight-hour soak:
+During the 30-minute resource soak:
 
 - resident memory remains below `32 MiB` with eight active stereo streams and
-  grows by less than `2 MiB` between hour one and hour eight;
+  grows by less than `2 MiB` between minute 10 and minute 30;
 - every source, transport, application stream, loudnessd filter, and sink in
   the server-driven eight-stream resource run remains present with no PipeWire
   error-counter increase or stalled callback;

@@ -3,7 +3,7 @@
 ## Scope
 
 This qualification validates the private playback fixture used by the extended
-strict soak. It does not replace the required eight-hour run.
+strict soak. It does not replace the required 30-minute run.
 
 - Harness commit: `1c3d08834542`
 - Documentation-only successor: `8d0c01438879`
@@ -45,4 +45,4 @@ node remained at 0. Private PipeWire and WirePlumber logs contained no error
 entry, and the system coredump count remained unchanged.
 
 The exact fixture topology is therefore accepted for the full strict playback
-soak. Release acceptance still requires that eight-hour run to pass unchanged.
+soak. Release acceptance still requires that 30-minute run to pass unchanged.

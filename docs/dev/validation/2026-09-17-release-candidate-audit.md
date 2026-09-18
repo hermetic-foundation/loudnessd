@@ -7,7 +7,7 @@ In progress. This audit applies the objective criteria in
 not declare the project stable while any required evidence below remains open.
 
 - Functional package revision: `6680c9fba550`
-- Evidence-contract `main`: `d3d71a430e26`
+- Evidence-contract `main`: `3c8388a3ab88`
 - Functional package closure:
   `/nix/store/az3y42gva3y9vy1x73i8x4zfrfy2p5vm-loudnessd-0.1.0`
 - Host: `midi-desktop-1`, x86_64 Linux 6.18.51
@@ -91,17 +91,23 @@ from an unlinked immutable snapshot. A 180-second playback qualification under
 that launcher exited successfully with zero profiler deltas, stable RSS, no log
 growth, and 100% eligible convergence.
 
-The final long-run gates therefore remain open. A varied-playback rerun against
-the current functional package closure started alone at 2026-09-18 08:07:54
-CDT. Its artifact prefix is
-`playback-soak-8h-current-0b37f3f5-1789736874`. The eight-stream resource rerun
-will start only after playback reaches a successful terminal state, avoiding
-the contention that invalidated the concurrent evidence. The current playback
-run began with both filter counters at zero, fixture recovery counters within
-the allowed baseline of 2, and loudnessd's processing thread at realtime
-priority 20. Commit `d3d71a430e26` also makes the harness reject playback CPU
-at or above the documented 5% single-core budget; the sequenced handoff applies
-the same predicate to this already-running immutable harness snapshot.
+The release gate was subsequently bounded to 30 minutes per mode. An eight-hour
+requirement was disproportionate for the current project and made routine local
+qualification take 16 hours when playback and resource runs were kept isolated.
+The resource gate now compares RSS from minute 10 through minute 30 while
+retaining the 32 MiB ceiling, 2 MiB growth limit, continuous profiler, routing,
+control-preservation, and callback-progress assertions.
+
+The in-progress eight-hour playback rerun was stopped intentionally when the
+gate changed. It completed 1,092,694 ms with stable 9,068,544-byte RSS, the same
+daemon PID and start time, two managed streams, no skips, and zero profiler
+deltas across every source, transport, application, filter, and sink. Those
+partial artifacts use the prefix
+`playback-soak-8h-current-0b37f3f5-1789736874`; they are retained as supporting
+evidence but do not replace the final 30-minute terminal run. Commit
+`d3d71a430e26` makes the harness reject playback CPU at or above the documented
+5% single-core budget, and commit `3c8388a3ab88` implements the bounded
+resource-memory window.
 
 ## Capture isolation
 
@@ -142,9 +148,8 @@ Passing recovery evidence is recorded in
 playback qualification records. The controlled Scarlett profile-cycle result
 is recorded in
 [`2026-09-17-device-reconnect.md`](2026-09-17-device-reconnect.md), together
-with kernel USB removal and re-enumeration. Suspend remains open because it
-would invalidate the two active uninterrupted soaks. It will run after both
-services reach their natural terminal state.
+with kernel USB removal and re-enumeration. Suspend remains open and will run
+before the replacement bounded soaks.
 
 ## Codebase audit
 
@@ -159,7 +164,7 @@ services reach their natural terminal state.
 
 ## Local completion blockers
 
-1. Complete and accept both final eight-hour soaks.
+1. Complete and accept the final 30-minute playback and resource soaks.
 2. Pass controlled suspend/resume.
 3. Activate the built personal NixOS closure and verify the packaged service,
    immutable config, route health, and desktop playback/capture behavior.

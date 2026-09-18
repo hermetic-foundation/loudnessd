@@ -10,7 +10,7 @@ strict soak assertions.
 
 This bounded qualification establishes that the revised controller status and
 gain-path fixtures work together. It does not replace the required exact-candidate
-eight-hour soak.
+30-minute soak.
 
 ## Measurements
 

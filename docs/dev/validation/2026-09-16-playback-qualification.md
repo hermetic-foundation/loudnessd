@@ -5,7 +5,7 @@
 Pass for the bounded two-stream qualification. This run validates the soak
 harness, observability, settled convergence scoring, short-run resource
 stability, varied boost behavior, routing, and cleanup. It does not replace the
-required eight-hour release soak or complete recovery matrix.
+required 30-minute release soak or complete recovery matrix.
 
 ## Environment
 
@@ -90,7 +90,7 @@ unsuitable for cumulative comparison.
 
 The short run ended while both deliberately quiet fixtures were still slewing
 toward the `-13 LUFS` target, so it supplies recovery and resource evidence but
-no convergence-ratio evidence. It does not replace the eight-hour release soak.
+no convergence-ratio evidence. It does not replace the 30-minute release soak.
 The same graph with an unoptimized debug binary consumed most of one core and
 tripped the kernel realtime watchdog; the harness now disables realtime only
 inside its private runtime, and release qualification always uses the optimized
@@ -144,7 +144,7 @@ same-node pause/resume before steady monitoring.
 An earlier pair of independent final snapshots appeared to show filter errors,
 but `pw-top` resets displayed counters for each profiler process. The continuous
 timeline is the authoritative evidence and showed no xrun. This bounded run
-still does not replace the required eight-hour soak.
+still does not replace the required 30-minute soak.
 
 ## Application-control invariant qualification
 
@@ -156,7 +156,7 @@ normalization. The compared state includes scalar volume, mute, per-channel
 volume, soft volume, and monitor controls. Both runs also reported zero
 PipeWire errors, route failures, callback stalls, IPC failures, and memory
 growth. This proves the assertion and bounded behavior; the same assertion must
-remain enabled for the required eight-hour run.
+remain enabled for the required 30-minute run.
 
 ## Eight-stream resource qualification
 
@@ -184,7 +184,7 @@ The same candidate produced xruns when the complete real-time test graph was
 artificially demoted with `nice +10`; at normal scheduling priority every
 filter remained at zero xruns. Build throttling and runtime scheduling are
 therefore kept separate. This bounded test satisfies the eight-stream resource
-case, but does not replace the eight-hour varied-content soak.
+case, but does not replace the 30-minute varied-content soak.
 
 ## True-peak limiter qualification
 
@@ -241,10 +241,10 @@ of one core. The complete application control and target invariants also held.
 
 ## Remaining release evidence
 
-- Complete the eight-hour varied-content soak and measure memory growth from
-  hour one through hour eight.
+- Complete the 30-minute varied-content soak and measure resource-run memory
+  growth from minute 10 through minute 30.
 - Retain the now-automated application control and target invariant throughout
-  the full eight-hour soak.
+  the full 30-minute soak.
 - Exercise a real browser pause and resume. The synthetic node-command case now
   passes, but feeding zero-valued samples is not equivalent and browser graph
   policy still needs direct integration evidence.

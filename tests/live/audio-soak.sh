@@ -3,6 +3,17 @@
 
 set -euo pipefail
 
+# Bash reads scripts incrementally. Execute an unlinked snapshot so repository
+# edits cannot change a long-running soak after it starts.
+snapshot_directory=${TMPDIR:-/tmp}
+if [[ ${BASH_SOURCE[0]} != "$snapshot_directory"/loudnessd-audio-soak.* ]]; then
+  script_snapshot=$(mktemp "$snapshot_directory/loudnessd-audio-soak.XXXXXX")
+  cp -- "${BASH_SOURCE[0]}" "$script_snapshot"
+  chmod u+x "$script_snapshot"
+  exec "$BASH" "$script_snapshot" "$@"
+fi
+rm -f -- "${BASH_SOURCE[0]}"
+
 if (( $# < 6 || $# > 9 )); then
   echo "usage: audio-soak.sh LOUDNESSD SOX PIPEWIRE WIREPLUMBER DURATION_SECONDS OUTPUT [playback|capture|disconnect|lifecycle|limiter|memory] [SAMPLE_RATE] [CHANNELS]" >&2
   exit 2

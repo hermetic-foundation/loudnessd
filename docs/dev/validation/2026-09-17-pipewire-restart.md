@@ -19,6 +19,31 @@ subsequently exercised sink replacement, including a transient link-factory
 20 observations with zero IPC failures, skipped streams, callback stalls,
 route failures, or resident-memory growth.
 
+## Active-route disconnect regression
+
+Restart testing later exposed a native teardown fault that the idle connection
+probe did not cover. Destroying a private PipeWire server while loudnessd owned
+an active stereo filter could invalidate the server-side graph before Rust
+dropped its remaining client proxies. Calling `pw_filter_destroy` against that
+invalid graph terminated loudnessd with `SIGSEGV` instead of returning the
+fatal connection error to systemd.
+
+Commits `e757d2426b27` and `6680c9fba550` prevent duplicate filter destruction
+and abandon the already-invalid native graph on the fatal core-disconnect exit
+path. The operating system then reclaims those process-local objects. Commit
+`4b11bfc4a45a` adds a dedicated `disconnect` mode to the private audio harness.
+It creates one healthy managed stereo route, terminates the private server, and
+requires all of the following:
+
+- loudnessd exits within ten seconds;
+- the process exits normally with status 1 rather than by signal; and
+- the daemon log reports the fatal `EPIPE` connection error.
+
+That regression mode passed against the fixed candidate. The private fixture
+reported the expected broken pipe, loudnessd exited with status 1, and no core
+dump was produced. This validates process safety during abrupt server loss;
+systemd restart behavior remains covered separately below.
+
 ## Service recovery
 
 The committed package was launched as a transient user service with

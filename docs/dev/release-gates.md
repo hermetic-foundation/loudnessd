@@ -66,6 +66,8 @@ volume or requiring a PipeWire restart:
 
 - clean daemon disable and stop;
 - forced daemon termination followed by restart and journal recovery;
+- fatal PipeWire server disconnect with an active managed route, followed by a
+  normal error exit rather than a signal or native destructor fault;
 - PipeWire and WirePlumber restart;
 - default sink or source change while streams are active;
 - active device removal and reconnection;

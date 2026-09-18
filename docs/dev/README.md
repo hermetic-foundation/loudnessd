@@ -184,9 +184,11 @@ private PipeWire daemon's real-time data loop. The source levels and waveforms
 cycle through quiet, loud, silent, and intermittent intervals without an
 ordinary-priority file-feeder or transport process.
 Capture mode uses one application identity with simultaneous playback and
-capture streams; lifecycle mode exercises process and configuration recovery;
-limiter mode drives deterministic low-average, high-crest material; memory mode
-drives eight independent stereo playback applications.
+capture streams; disconnect mode requires a normal error exit when the private
+PipeWire server disappears with an active managed route; lifecycle mode
+exercises process and configuration recovery; limiter mode drives deterministic
+low-average, high-crest material; memory mode drives eight independent stereo
+playback applications.
 Hardware monitors are not loaded. The private graph retains normal PipeWire
 scheduling so callback timing represents the production daemon while its
 runtime directory, daemon, IPC socket, fixtures, and recovery journal remain

@@ -94,6 +94,10 @@ During the eight-hour soak:
 
 - resident memory remains below `32 MiB` with eight active stereo streams and
   grows by less than `2 MiB` between hour one and hour eight;
+- every loudnessd filter in the eight-stream resource run remains present with
+  no PipeWire error-counter increase or stalled callback. Ordinary-priority
+  fixture-player errors are retained as observational evidence but do not
+  replace or invalidate the separate strict playback continuity soak;
 - average CPU use remains below `5%` of one core on the Ryzen 5 3400G baseline
   for two active 48 kHz stereo streams, measured from daemon process CPU ticks;
   comparable hardware must record its processor and measurement method; and

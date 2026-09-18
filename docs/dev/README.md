@@ -194,15 +194,19 @@ post-recovery target. After pause/resume and monitoring, the complete volume,
 mute, channel-volume, soft-volume, monitor-control, and target state must match
 exactly. A mismatch retains before-and-after diagnostics and fails the run.
 
-Monitoring requires exactly the active-stream count for its selected mode. The harness retains NDJSON
-status, private server and session-manager logs, and one continuous `pw-top`
-timeline spanning the monitoring interval. That timeline must contain both
-fixture nodes and both loudnessd filter nodes. It records every node's first
-running error counter after deliberate endpoint replacement as a recovery
-baseline, permits at most two recovery errors per node, and requires a zero
-counter increase throughout steady-state monitoring. The retained
-`*.profiler-errors.tsv` artifact therefore separates bounded recovery history
-from new continuity failures. Recovery behavior is also recorded separately.
+Monitoring requires exactly the active-stream count for its selected mode. The
+harness retains NDJSON status, private server and session-manager logs, and one
+continuous `pw-top` timeline spanning the monitoring interval. That timeline
+must contain every fixture and loudnessd filter node. Playback, capture,
+lifecycle, and limiter modes enforce a zero error-counter increase for both
+node roles after allowing at most two initial recovery errors. Memory mode
+still records every fixture counter, but enforces continuity only for the eight
+loudnessd filters because its ordinary-priority `pw-cat` processes are load
+generators rather than evidence for playback continuity. The retained
+`*.profiler-errors.tsv` artifact labels each node's role and whether its
+counter is enforced, separating bounded recovery history and observational
+fixture scheduling from daemon continuity failures. Recovery behavior is also
+recorded separately.
 Private service logs must contain no error entries, and no audio is retained.
 Its exit trap removes the complete private runtime and never starts, stops, or
 reloads the user's ordinary PipeWire or loudnessd services.

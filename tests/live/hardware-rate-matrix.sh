@@ -27,6 +27,7 @@ playback_application=loudnessd.hardware-rate.playback
 capture_application=loudnessd.hardware-rate.capture
 stream_pid=
 initial_force_rate=
+initial_allowed_rates=
 raw_files=()
 baseline_managed_ids=()
 results_file=$output.observations.jsonl
@@ -63,16 +64,24 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 wait_for_graph_rate() {
-  local expected=$1
+  local node_id=$1
+  local expected=$2
   local current=
   for _ in {1..100}; do
-    current=$(metadata_value clock.rate)
+    current=$(pw-dump | jq -r --argjson node_id "$node_id" '
+      first(.[] | select(
+        .type == "PipeWire:Interface:Node" and .id == $node_id
+      ) | .info.props["node.rate"]) // empty
+    ')
+    current=${current#*/}
     if [[ $current == "$expected" ]]; then
+      printf '%s\n' "$current"
       return 0
     fi
     sleep 0.1
   done
-  printf 'graph clock did not reach %s Hz; last value was %s\n' "$expected" "$current" >&2
+  printf 'stream node %s did not negotiate %s Hz; last value was %s\n' \
+    "$node_id" "$expected" "$current" >&2
   return 1
 }
 
@@ -210,7 +219,7 @@ start_capture() {
 run_rate() {
   local domain=$1
   local rate=$2
-  local application target_proc raw_file start end node_id before_controls after_controls hardware_rate
+  local application target_proc raw_file start end node_id before_controls after_controls graph_rate hardware_rate
   application=$playback_application
   target_proc=$playback_proc
   raw_file=$output.playback-$rate.raw
@@ -220,7 +229,6 @@ run_rate() {
   fi
 
   pw-metadata -n settings 0 clock.force-rate "$rate" >/dev/null
-  wait_for_graph_rate "$rate"
 
   if [[ $domain == playback ]]; then
     start_playback "$rate" "$raw_file"
@@ -230,6 +238,7 @@ run_rate() {
 
   start=$(wait_for_stream "$application" "$domain")
   node_id=$(jq -r .node_id <<<"$start")
+  graph_rate=$(wait_for_graph_rate "$node_id" "$rate")
   before_controls=$(stream_controls "$node_id")
   hardware_rate=$(wait_for_physical_rate "$target_proc" "$rate")
   end=$(wait_for_sequence_advance "$application" "$domain" "$(jq -r .meter_sequence <<<"$start")")
@@ -245,7 +254,7 @@ run_rate() {
   jq -cn \
     --arg domain "$domain" \
     --argjson requested_rate "$rate" \
-    --argjson graph_rate "$(metadata_value clock.rate)" \
+    --argjson graph_rate "$graph_rate" \
     --argjson physical_rate "$hardware_rate" \
     --argjson start "$start" \
     --argjson end "$end" '
@@ -292,11 +301,20 @@ fi
 mkdir -p "$(dirname "$output")"
 : >"$results_file"
 initial_force_rate=$(metadata_value clock.force-rate)
-if [[ -z $initial_force_rate ]]; then
-  echo 'PipeWire settings metadata does not expose clock.force-rate' >&2
+initial_allowed_rates=$(metadata_value clock.allowed-rates)
+if [[ -z $initial_force_rate || -z $initial_allowed_rates ]]; then
+  echo 'PipeWire settings metadata does not expose force-rate and allowed-rates' >&2
   exit 1
 fi
 mapfile -t baseline_managed_ids < <("$loudnessd" msg status-json | jq -r '.streams[].node_id')
+available_rates=$(tr -d '[],' <<<"$initial_allowed_rates" | tr ' ' '\n' | sed '/^$/d')
+while IFS= read -r requested_rate; do
+  if ! grep -Fxq "$requested_rate" <<<"$available_rates"; then
+    printf 'requested rate %s is not enabled in the running PipeWire core: %s\n' \
+      "$requested_rate" "$initial_allowed_rates" >&2
+    exit 1
+  fi
+done < <(tr ',' '\n' <<<"$playback_rates,$capture_rates" | sort -nu)
 
 "$loudnessd" msg set "$playback_application" playback on >/dev/null
 "$loudnessd" msg set "$capture_application" capture on >/dev/null
@@ -315,6 +333,10 @@ if [[ $(metadata_value clock.force-rate) != "$initial_force_rate" ]]; then
   echo 'PipeWire forced rate was not restored' >&2
   exit 1
 fi
+if [[ $(metadata_value clock.allowed-rates) != "$initial_allowed_rates" ]]; then
+  echo 'PipeWire allowed-rate list was not restored' >&2
+  exit 1
+fi
 for domain_application in \
   "playback:$playback_application" \
   "capture:$capture_application"; do
@@ -329,11 +351,13 @@ wait_for_baseline_recovery
 
 jq -s \
   --arg initial_force_rate "$initial_force_rate" \
+  --arg initial_allowed_rates "$initial_allowed_rates" \
   --arg playback_target "$playback_target" \
   --arg capture_target "$capture_target" '
     {
       result: "pass",
       initial_force_rate: $initial_force_rate,
+      initial_allowed_rates: $initial_allowed_rates,
       playback_target: $playback_target,
       capture_target: $capture_target,
       observations: .

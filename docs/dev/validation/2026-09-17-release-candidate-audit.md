@@ -7,7 +7,7 @@ In progress. This audit applies the objective criteria in
 not declare the project stable while any required evidence below remains open.
 
 - Functional package revision: `6680c9fba550`
-- Evidence-contract `main`: `3b96b87e3e55`
+- Evidence-contract `main`: `84954e22313c`
 - Functional package closure:
   `/nix/store/az3y42gva3y9vy1x73i8x4zfrfy2p5vm-loudnessd-0.1.0`
 - Host: `midi-desktop-1`, x86_64 Linux 6.18.51
@@ -71,14 +71,14 @@ Both long-run gates remain open until the harnesses exit successfully and their
 summaries pass every continuity, profiler, process-identity, CPU, control-state,
 and memory assertion.
 
-The active long runs predate test-harness commits `565ec448bc4a`,
-`a4eeb4b88e10`, and `3b96b87e3e55`. Those revisions make nonzero monitor
-continuity counters, insufficient playback convergence, resource-memory limit
-violations, warm-state RSS growth, and monitoring-interval log growth fail
-automatically. Restarting the runs would discard their uninterrupted evidence,
-so this audit will apply those same assertions directly to the retained
-artifacts. Every subsequent run enforces them in `audio-soak.sh` before
-returning success.
+The active long runs predate the terminal-contract hardening through
+`84954e22313c`. Those revisions make nonzero monitor continuity counters,
+missing process metrics, insufficient playback convergence, peak-ceiling
+violations, resource-memory limit violations, warm-state RSS growth, and
+monitoring-interval log growth fail automatically. Restarting the runs would
+discard their uninterrupted evidence, so this audit will apply those same
+assertions directly to the retained artifacts. Every subsequent run enforces
+them in `audio-soak.sh` before returning success.
 
 ## Capture isolation
 

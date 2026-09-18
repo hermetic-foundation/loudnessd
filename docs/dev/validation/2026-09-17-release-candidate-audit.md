@@ -7,7 +7,7 @@ In progress. This audit applies the objective criteria in
 not declare the project stable while any required evidence below remains open.
 
 - Functional package revision: `6680c9fba550`
-- Evidence-contract `main`: `84954e22313c`
+- Evidence-contract `main`: `0b37f3f5c839`
 - Functional package closure:
   `/nix/store/az3y42gva3y9vy1x73i8x4zfrfy2p5vm-loudnessd-0.1.0`
 - Host: `midi-desktop-1`, x86_64 Linux 6.18.51
@@ -46,13 +46,13 @@ Application node rates and active USB hardware rates matched in every case.
 The full evidence and explicit 176.4 kHz fail-open boundary are recorded in
 [`2026-09-17-sample-rate-matrix.md`](2026-09-17-sample-rate-matrix.md).
 
-The final strict varied-playback soak started at 2026-09-17 20:51:29 CDT and
-remains in progress. Its artifacts use the prefix
+The first completed strict varied-playback monitor ran for 28,800 seconds and
+recorded 28,582 observations with no IPC failures, daemon restarts, route
+shortfalls, skipped streams, unhealthy routes, callback stalls, RSS growth, or
+peak-ceiling violations. All 10,460 eligible convergence observations passed.
+Its artifacts use the prefix
 `playback-soak-8h-server-10c8aa56-1789696289` under
-`$XDG_STATE_HOME/loudnessd/validation`. It runs the pre-disconnect-fix package;
-the later functional changes affect only native teardown after fatal server
-loss, not the metering, controller, limiter, or process callback exercised by
-this soak.
+`$XDG_STATE_HOME/loudnessd/validation`.
 
 The first eight-stream resource run used ordinary-priority file feeders. After
 2.8 hours every loudnessd filter had accumulated 3--10 profiler errors, so the
@@ -63,27 +63,43 @@ the prefix `memory-soak-8h-final-f2865340`, with the observed deltas retained in
 Memory mode now uses eight PipeWire server-side generators and persistent
 loopback application nodes. A 60-second optimized-package qualification held
 all source, transport, application, filter, and sink counters at zero with
-stable 13.65 MiB RSS. The replacement eight-hour run started at
-2026-09-17 22:30:30 CDT from the functional package closure. Its artifacts use
-the prefix `memory-soak-8h-server-f888695a-1789702230`.
+stable 13.65 MiB RSS. The replacement eight-hour monitor then completed 28,800
+seconds and 28,729 observations without an IPC failure, daemon restart, route
+or callback continuity failure, or RSS growth. Its artifacts use the prefix
+`memory-soak-8h-server-f888695a-1789702230`.
 
-The replacement run's first complete observation at or after one hour was at
+The resource run's first complete observation at or after one hour was at
 3,600,590 ms. It recorded PID `1561010`, process start ticks `4934787`, and
 14,450,688 bytes RSS with all eight routes healthy and no skipped streams. The
-final resource audit compares hour eight against this warm-state baseline.
+final observation had the same RSS, for zero warm-state growth.
 
-Both long-run gates remain open until the harnesses exit successfully and their
-summaries pass every continuity, profiler, process-identity, CPU, control-state,
-and memory assertion.
+The strict profiler gate rejected both completed runs. One playback filter
+accumulated 2 errors, while seven resource-run filters accumulated 1--3 errors.
+The increases occurred at approximately 01:23 and 01:25 CDT in otherwise
+independent private PipeWire servers while both stress graphs and unrelated
+host work were running concurrently. Source, transport, application, and sink
+counters remained stable. Active inspection in a later private graph confirmed
+that PipeWire, WirePlumber, and loudnessd processing threads all used
+`SCHED_RR` priority 20 through RTKit, so the rejection is retained as host
+contention evidence rather than attributed to missing realtime scheduling.
 
-The active long runs predate the terminal-contract hardening through
-`84954e22313c`. Those revisions make nonzero monitor continuity counters,
-missing process metrics, insufficient playback convergence, peak-ceiling
-violations, resource-memory limit violations, warm-state RSS growth, and
-monitoring-interval log growth fail automatically. Restarting the runs would
-discard their uninterrupted evidence, so this audit will apply those same
-assertions directly to the retained artifacts. Every subsequent run enforces
-them in `audio-soak.sh` before returning success.
+The original harness processes also reached their terminal checks after their
+source file had changed in place during the eight-hour runs. Bash consequently
+read later source text and failed after the monitors had completed. Commit
+`0b37f3f5c839` fixes this test-infrastructure race by re-executing every run
+from an unlinked immutable snapshot. A 180-second playback qualification under
+that launcher exited successfully with zero profiler deltas, stable RSS, no log
+growth, and 100% eligible convergence.
+
+The final long-run gates therefore remain open. A varied-playback rerun against
+the current functional package closure started alone at 2026-09-18 08:07:54
+CDT. Its artifact prefix is
+`playback-soak-8h-current-0b37f3f5-1789736874`. The eight-stream resource rerun
+will start only after playback reaches a successful terminal state, avoiding
+the contention that invalidated the concurrent evidence. The current playback
+run began with both filter counters at zero, fixture recovery counters within
+the allowed baseline of 2, and loudnessd's processing thread at realtime
+priority 20.
 
 ## Capture isolation
 

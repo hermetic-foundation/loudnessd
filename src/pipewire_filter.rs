@@ -129,7 +129,7 @@ impl std::error::Error for FilterActivationError {}
 
 static FILTER_EVENTS: sys::pw_filter_events = sys::pw_filter_events {
     version: sys::PW_VERSION_FILTER_EVENTS,
-    destroy: None,
+    destroy: Some(process::destroy_callback),
     state_changed: None,
     io_changed: None,
     param_changed: None,
@@ -403,6 +403,9 @@ impl FilterState {
 
 impl Drop for UnconnectedFilter {
     fn drop(&mut self) {
+        if self.callback_data.is_destroyed() {
+            return;
+        }
         if let Some(listener) = self.listener.take() {
             pipewire::spa::utils::hook::remove(*listener);
         }

@@ -3,7 +3,7 @@
 use std::{
     os::raw::c_void,
     ptr::NonNull,
-    sync::atomic::{AtomicU32, AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
 };
 
 use ebur128_stream::Channel;
@@ -19,6 +19,7 @@ const MAX_METER_CHANNELS: usize = 64;
 const PREPARED_SAMPLE_RATES: [u32; 7] = [22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 192_000];
 
 pub(super) struct FilterCallbackData {
+    destroyed: AtomicBool,
     ports: Vec<CallbackPort>,
     target_gain_bits: AtomicU32,
     default_sample_rate: Option<u32>,
@@ -56,6 +57,7 @@ impl ProcessingState {
 impl Default for FilterCallbackData {
     fn default() -> Self {
         Self {
+            destroyed: AtomicBool::new(false),
             ports: Vec::new(),
             target_gain_bits: AtomicU32::new(0.0_f32.to_bits()),
             default_sample_rate: None,
@@ -68,6 +70,14 @@ impl Default for FilterCallbackData {
 }
 
 impl FilterCallbackData {
+    pub(super) fn mark_destroyed(&self) {
+        self.destroyed.store(true, Ordering::Release);
+    }
+
+    pub(super) fn is_destroyed(&self) -> bool {
+        self.destroyed.load(Ordering::Acquire)
+    }
+
     pub(super) fn add_port(
         &mut self,
         raw: NonNull<c_void>,
@@ -117,6 +127,14 @@ impl FilterCallbackData {
 
     pub(super) fn latest_meter_snapshot(&self) -> Option<MeterSnapshot> {
         self.latest_metrics.read()
+    }
+}
+
+pub(super) unsafe extern "C" fn destroy_callback(data: *mut c_void) {
+    // SAFETY: PipeWire invokes this callback with the data pointer supplied to
+    // the filter while the boxed callback data is still alive.
+    if let Some(data) = unsafe { data.cast::<FilterCallbackData>().as_ref() } {
+        data.mark_destroyed();
     }
 }
 
@@ -516,6 +534,16 @@ mod tests {
             data.add_port(pointer, PortDirection::Output, channel.to_owned());
         }
         data
+    }
+
+    #[test]
+    fn records_native_filter_destruction() {
+        let data = FilterCallbackData::default();
+        assert!(!data.is_destroyed());
+
+        data.mark_destroyed();
+
+        assert!(data.is_destroyed());
     }
 
     #[test]

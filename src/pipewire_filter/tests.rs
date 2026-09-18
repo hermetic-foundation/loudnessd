@@ -291,3 +291,19 @@ fn live_core_created_filter_retains_its_core_until_destroyed() {
     drop(context);
     drop(filter);
 }
+
+#[test]
+#[ignore = "requires a live PipeWire user session"]
+fn live_native_destruction_prevents_a_second_destroy_on_drop() {
+    let main_loop = pipewire::main_loop::MainLoopRc::new(None).unwrap();
+    let context = pipewire::context::ContextRc::new(&main_loop, None).unwrap();
+    let core = context.connect_rc(None).unwrap();
+    let filter = UnconnectedFilter::new_on_core(&core, "loudnessd-destroy-test").unwrap();
+
+    // SAFETY: The test uniquely owns this unconnected native filter. Its
+    // destroy callback transfers native ownership away from the Rust wrapper.
+    unsafe { sys::pw_filter_destroy(filter.raw.as_ptr()) };
+    assert!(filter.callback_data.is_destroyed());
+
+    drop(filter);
+}

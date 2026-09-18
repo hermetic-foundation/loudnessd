@@ -67,6 +67,11 @@ stable 13.65 MiB RSS. The replacement eight-hour run started at
 2026-09-17 22:30:30 CDT from the functional package closure. Its artifacts use
 the prefix `memory-soak-8h-server-f888695a-1789702230`.
 
+The replacement run's first complete observation at or after one hour was at
+3,600,590 ms. It recorded PID `1561010`, process start ticks `4934787`, and
+14,450,688 bytes RSS with all eight routes healthy and no skipped streams. The
+final resource audit compares hour eight against this warm-state baseline.
+
 Both long-run gates remain open until the harnesses exit successfully and their
 summaries pass every continuity, profiler, process-identity, CPU, control-state,
 and memory assertion.

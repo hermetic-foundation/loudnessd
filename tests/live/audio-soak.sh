@@ -534,7 +534,10 @@ wait_for_filter_removal() {
         .type == "PipeWire:Interface:Node" and
         .info.props["media.category"]? == "Filter" and
         .info.props["media.role"]? == "DSP" and
-        (.info.props["node.name"]? // "" | startswith("loudnessd-"))
+        (
+          ((.info.props["node.name"]? // "") | tostring) as $name |
+          ($name == "loudnessd" or ($name | startswith("loudnessd-")))
+        )
       ))
     ' >/dev/null; then
       return 0

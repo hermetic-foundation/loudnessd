@@ -1251,28 +1251,28 @@ if (( monitor_status != 0 )); then
   exit "$monitor_status"
 fi
 
-if [[ $mode == memory ]] && (( duration >= 3600 )); then
-  one_hour_rss_bytes=
+if [[ $mode == memory ]] && (( duration >= 1800 )); then
+  warm_rss_bytes=
   final_warm_rss_bytes=
   while IFS= read -r rss_bytes; do
-    if [[ -z $one_hour_rss_bytes ]]; then
-      one_hour_rss_bytes=$rss_bytes
+    if [[ -z $warm_rss_bytes ]]; then
+      warm_rss_bytes=$rss_bytes
     fi
     final_warm_rss_bytes=$rss_bytes
   done < <(jq -r '
-    select(.elapsed_milliseconds >= 3600000) |
+    select(.elapsed_milliseconds >= 600000) |
     .status.process.rss_bytes // empty
   ' "$output")
-  if [[ -z $one_hour_rss_bytes || -z $final_warm_rss_bytes ]]; then
+  if [[ -z $warm_rss_bytes || -z $final_warm_rss_bytes ]]; then
     echo "resource qualification has no complete warm-state RSS interval" >&2
     exit 1
   fi
-  post_warmup_rss_growth_bytes=$((final_warm_rss_bytes - one_hour_rss_bytes))
+  post_warmup_rss_growth_bytes=$((final_warm_rss_bytes - warm_rss_bytes))
   jq \
-    --argjson one_hour "$one_hour_rss_bytes" \
+    --argjson warm "$warm_rss_bytes" \
     --argjson growth "$post_warmup_rss_growth_bytes" '
       . + {
-        one_hour_rss_bytes: $one_hour,
+        warm_rss_bytes: $warm,
         post_warmup_rss_growth_bytes: $growth
       }
     ' "$summary_output" >"$test_runtime/summary-with-warm-rss.json"
@@ -1367,8 +1367,8 @@ if [[ $mode == memory ]] && ! jq -e '
   exit 1
 fi
 
-if [[ $mode == memory ]] && (( duration >= 3600 )) && ! jq -e '
-  .one_hour_rss_bytes != null and
+if [[ $mode == memory ]] && (( duration >= 1800 )) && ! jq -e '
+  .warm_rss_bytes != null and
   .post_warmup_rss_growth_bytes != null and
   .post_warmup_rss_growth_bytes < 2097152
 ' "$summary_output" >/dev/null; then

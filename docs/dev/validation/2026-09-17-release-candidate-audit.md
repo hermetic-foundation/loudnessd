@@ -7,7 +7,7 @@ In progress. This audit applies the objective criteria in
 not declare the project stable while any required evidence below remains open.
 
 - Functional package revision: `6680c9fba550`
-- Evidence-contract `main`: `4c698f3cff4c`
+- Evidence-contract `main`: `aa4e3647528c`
 - Functional package closure:
   `/nix/store/az3y42gva3y9vy1x73i8x4zfrfy2p5vm-loudnessd-0.1.0`
 - Host: `midi-desktop-1`, x86_64 Linux 6.18.51
@@ -169,7 +169,7 @@ convergence and is recorded in
 | Valid and invalid configuration reload | Pass |
 | Hardware-backed source profile removal and reconnection | Pass |
 | USB driver removal, re-enumeration, and reconnection | Pass |
-| System suspend and resume | Open |
+| System suspend and resume | Not required |
 
 Passing recovery evidence is recorded in
 [`2026-09-17-bypass-exit.md`](2026-09-17-bypass-exit.md),
@@ -177,13 +177,28 @@ Passing recovery evidence is recorded in
 playback qualification records. The controlled Scarlett profile-cycle result
 is recorded in
 [`2026-09-17-device-reconnect.md`](2026-09-17-device-reconnect.md), together
-with kernel USB removal and re-enumeration. Suspend remains open and will run
-after the replacement bounded soaks. Unattended wake preflight found that the
-only RTC advertises wake from S4 rather than suspend-to-RAM and exposes no
-`wakealarm`; `rtcwake` rejected the alarm before suspending. A systemd
-`WakeSystem=yes` timer was also rejected by the kernel with `Operation not
-supported`. Neither probe entered sleep. The final suspend qualification
-therefore requires a manual keyboard or power-button wake.
+with kernel USB removal and re-enumeration. Commit `aa4e3647528c` removes system
+suspend from the release gate at the project owner's direction. The retained
+suspend harness is an optional operator diagnostic and may not be initiated
+autonomously; no suspend evidence is claimed by this audit.
+
+## Personal NixOS deployment
+
+The personal flake commit `fcd1b95f4e1d` advances its loudnessd input to
+`16b13c52ef9c`, the qualified upstream revision before the release-policy-only
+documentation commit. `nixos-rebuild switch` completed successfully with two
+jobs and two cores and activated
+`/nix/store/3s0p5bk1m0jhir1wvpkcd9wha853hcih-nixos-system-midi-desktop-1-26.11.20260911.eaad089`.
+
+The upstream source filter kept the deployed package at the qualified closure
+`/nix/store/az3y42gva3y9vy1x73i8x4zfrfy2p5vm-loudnessd-0.1.0`. Activation
+preserved the running loudnessd, PipeWire, and WirePlumber process identities.
+The generated service still reads the immutable
+`/nix/store/g0yvkhwc46bpvv6dzj4ml2irqj7xwq4k-loudnessd.toml`, whose defaults
+enable playback and capture normalization. A post-switch physical-graph
+playback probe acquired one healthy streaming route, advanced its meter from 5
+to 313, applied gain toward the `-16 LUFS` target, and cleaned up to zero
+managed or skipped streams without restarting the daemon.
 
 ## Codebase audit
 
@@ -198,11 +213,10 @@ therefore requires a manual keyboard or power-button wake.
 
 ## Local completion blockers
 
-1. Pass controlled suspend/resume.
-2. Activate the built personal NixOS closure and verify the packaged service,
-   immutable config, route health, and desktop playback/capture behavior.
-3. Re-run this audit against final local `main` and resolve every high-severity
-   local defect.
+None under the current release policy. The final local `nix flake check` passed
+all seven checks on `aa4e3647528c`; the subsequent audit update is excluded from
+the package source closure. No unresolved critical or high-severity local defect
+was found.
 
 ## Deferred external release gates
 

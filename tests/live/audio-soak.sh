@@ -137,6 +137,49 @@ printf '%s\n' \
   'context.spa-libs = {' \
   '  audiotestsrc = audiotestsrc/libspa-audiotestsrc' \
   '}' >"$server_config_dir/10-audiotestsrc.conf"
+if [[ $mode == playback ]]; then
+  printf '%s\n' \
+    'context.modules = [' \
+    '  { name = libpipewire-module-loopback' \
+    '    args = {' \
+    "      audio.position = $audio_position" \
+    '      capture.props = {' \
+    '        node.name = loudnessd-soak-transport-continuous' \
+    '        media.class = Stream/Input/Audio/Internal' \
+    '        target.object = loudnessd-soak-source-continuous' \
+    '        node.passive = true' \
+    '      }' \
+    '      playback.props = {' \
+    '        node.name = loudnessd-soak-playback-continuous' \
+    '        media.class = Stream/Output/Audio' \
+    '        application.id = loudnessd.soak.continuous' \
+    '        application.name = Loudnessd-Soak-Continuous' \
+    "        target.object = $sink_name" \
+    '        node.passive = false' \
+    '      }' \
+    '    }' \
+    '  }' \
+    '  { name = libpipewire-module-loopback' \
+    '    args = {' \
+    "      audio.position = $audio_position" \
+    '      capture.props = {' \
+    '        node.name = loudnessd-soak-transport-intermittent' \
+    '        media.class = Stream/Input/Audio/Internal' \
+    '        target.object = loudnessd-soak-source-intermittent' \
+    '        node.passive = true' \
+    '      }' \
+    '      playback.props = {' \
+    '        node.name = loudnessd-soak-playback-intermittent' \
+    '        media.class = Stream/Output/Audio' \
+    '        application.id = loudnessd.soak.intermittent' \
+    '        application.name = Loudnessd-Soak-Intermittent' \
+    "        target.object = $sink_name" \
+    '        node.passive = false' \
+    '      }' \
+    '    }' \
+    '  }' \
+    ']' >"$server_config_dir/11-playback-loopbacks.conf"
+fi
 printf '%s\n' \
   'context.properties = {' \
   "  default.clock.rate = $sample_rate" \
@@ -612,7 +655,7 @@ create_realtime_source() {
     object.linger = true
     node.always-process = true
     node.param.Props = {
-      live = true
+      live = false
       waveType = 0
       frequency = $frequency
       volume = $initial_volume
@@ -626,33 +669,9 @@ create_realtime_source() {
 
 create_realtime_playback_fixture() {
   local fixture_name=$1
-  local application_id=$2
-  local application_name=$3
-  local source_name="loudnessd-soak-source-$fixture_name"
   local capture_name="loudnessd-soak-transport-$fixture_name"
-  local playback_name="loudnessd-soak-playback-$fixture_name"
   local capture_id
 
-  "${private_env[@]}" pw-loopback \
-    --name "loudnessd-soak-loopback-$fixture_name" \
-    --channels "$channels" \
-    --channel-map "$channel_map" \
-    --latency 100 \
-    --capture "$source_name" \
-    --playback "$sink_name" \
-    --capture-props "{
-      node.name = $capture_name
-      media.class = Stream/Input/Audio/Internal
-      node.passive = true
-    }" \
-    --playback-props "{
-      node.name = $playback_name
-      media.class = Stream/Output/Audio
-      application.id = $application_id
-      application.name = $application_name
-      node.passive = false
-    }" >/dev/null 2>&1 &
-  stream_pids+=("$!")
   capture_id=$(wait_for_named_node "$capture_name")
   fixture_transport_ids+=("$capture_id")
 }
@@ -665,7 +684,7 @@ set_realtime_source() {
   while true; do
     source_id=$(wait_for_named_node "$source_name" || true)
     if [[ -n $source_id ]] && "${private_env[@]}" pw-cli set-param "$source_id" Props \
-      "{ live = true, waveType = $wave_type, volume = $volume }" >/dev/null 2>&1; then
+      "{ live = false, waveType = $wave_type, volume = $volume }" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.1
@@ -740,10 +759,8 @@ start_realtime_fixture_graph() {
 }
 
 if [[ $mode == playback ]]; then
-  create_realtime_playback_fixture \
-    continuous loudnessd.soak.continuous Loudnessd-Soak-Continuous
-  create_realtime_playback_fixture \
-    intermittent loudnessd.soak.intermittent Loudnessd-Soak-Intermittent
+  create_realtime_playback_fixture continuous
+  create_realtime_playback_fixture intermittent
 elif [[ $mode == capture ]]; then
   second_fixture=$test_runtime/second-stream.raw
   generate_second_stream "$second_fixture"

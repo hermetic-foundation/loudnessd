@@ -257,6 +257,25 @@ success, failure, or interruption. A same-rate 48 kHz run is useful for
 qualifying the harness mechanics, but does not replace the full hardware
 matrix required by the release gates.
 
+`tests/live/suspend-resume.sh` records the controlled power-lifecycle gate. It
+requires one or more already-active healthy managed streams and accepts an
+explicit command that returns only after the host resumes:
+
+```console
+tests/live/suspend-resume.sh "$(command -v loudnessd)" ./suspend-resume 1 \
+  -- sudo rtcwake -m mem -s 45
+```
+
+Before suspension it snapshots structured daemon status, the PipeWire graph,
+and every managed application's complete `Props` control state. After resume it
+allows up to 60 seconds for recovery, then requires the same application node
+identities, healthy streaming routes, advancing meter sequences, unchanged
+controls, and the original loudnessd process identity. The final graph must
+contain exactly the filter nodes reported by daemon status, with no missing or
+stale loudnessd DSP node. The retained summary includes both full status
+snapshots and the measured suspend wall time. A no-op command qualifies the
+harness assertions only; release evidence requires an actual system suspend.
+
 Native desktop validation on NixOS additionally covered:
 
 - two simultaneous Chromium playback streams with independent `-10.99 LUFS`

@@ -1231,6 +1231,27 @@ set -e
 monitor_pid=
 cat "$summary_output"
 
+if (( monitor_status != 0 )); then
+  echo "loudnessd monitor failed during the soak" >&2
+  exit "$monitor_status"
+fi
+
+if ! jq -e --argjson expected "$expected_active" '
+  .samples > 0 and
+  .ipc_failures == 0 and
+  .daemon_restarts == 0 and
+  .minimum_active_streams == $expected and
+  .maximum_active_streams == $expected and
+  .active_stream_shortfall_observations == 0 and
+  .skipped_stream_observations == 0 and
+  .maximum_skipped_streams == 0 and
+  .unhealthy_route_observations == 0 and
+  .stalled_callback_observations == 0
+' "$summary_output" >/dev/null; then
+  echo "soak monitor reported a continuity, routing, or process-identity failure" >&2
+  exit 1
+fi
+
 if ! wait "$top_pid"; then
   echo "continuous PipeWire profiler failed" >&2
   exit 1
@@ -1250,9 +1271,23 @@ if [[ $mode == playback ]] && ! jq -e '
   .boost_observations > 0 and
   .cut_observations > 0 and
   .minimum_gain_db < -0.01 and
-  .maximum_gain_db > 0.01
+  .maximum_gain_db > 0.01 and
+  .convergence_eligible_observations > 0 and
+  .convergence_ratio >= 0.95
 ' "$summary_output" >/dev/null; then
-  echo "playback qualification did not exercise both boost and cut gain paths" >&2
+  echo "playback qualification did not cover gain paths or meet convergence" >&2
+  exit 1
+fi
+
+if [[ $mode == memory ]] && ! jq -e '
+  .initial_rss_bytes != null and
+  .final_rss_bytes != null and
+  .peak_rss_bytes != null and
+  .rss_growth_bytes != null and
+  .peak_rss_bytes < 33554432 and
+  .rss_growth_bytes < 2097152
+' "$summary_output" >/dev/null; then
+  echo "resource qualification exceeded the resident-memory bounds" >&2
   exit 1
 fi
 

@@ -263,9 +263,10 @@ success, failure, or interruption. A same-rate 48 kHz run is useful for
 qualifying the harness mechanics, but does not replace the full hardware
 matrix required by the release gates.
 
-`tests/live/suspend-resume.sh` records the controlled power-lifecycle gate. It
-requires one or more already-active healthy managed streams and accepts an
-explicit command that returns only after the host resumes:
+`tests/live/suspend-resume.sh` is an optional operator diagnostic, not a release
+gate. It must never be started autonomously. It requires explicit operator
+direction immediately before use, one or more already-active healthy managed
+streams, and a command that returns only after the host resumes:
 
 ```console
 tests/live/suspend-resume.sh "$(command -v loudnessd)" ./suspend-resume 1 \
@@ -280,7 +281,8 @@ controls, and the original loudnessd process identity. The final graph must
 contain exactly the filter nodes reported by daemon status, with no missing or
 stale loudnessd DSP node. The retained summary includes both full status
 snapshots and the measured suspend wall time. A no-op command qualifies the
-harness assertions only; release evidence requires an actual system suspend.
+harness assertions only. Routine development and release qualification do not
+require or authorize an actual system suspend.
 
 Native desktop validation on NixOS additionally covered:
 

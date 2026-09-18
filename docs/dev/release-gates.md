@@ -72,7 +72,6 @@ volume or requiring a PipeWire restart:
 - default sink or source change while streams are active;
 - active device removal and reconnection;
 - application exit during route installation and bypass;
-- suspend and resume; and
 - configuration reload with both valid and invalid input.
 
 No stale loudnessd node, link, recovery journal, or temporary test artifact may

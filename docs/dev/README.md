@@ -172,6 +172,8 @@ The revised playback target and real browser WebRTC capture probe are recorded
 in [`validation/2026-09-17-target16-webrtc.md`](validation/2026-09-17-target16-webrtc.md).
 The bounded playback gain-path qualification is recorded in
 [`validation/2026-09-17-gain-path-qualification.md`](validation/2026-09-17-gain-path-qualification.md).
+The server-owned strict playback fixture qualification is recorded in
+[`validation/2026-09-17-realtime-playback-fixture.md`](validation/2026-09-17-realtime-playback-fixture.md).
 
 `tests/live/audio-soak.sh` starts a private PipeWire daemon and a policy-only
 WirePlumber instance in a temporary runtime directory. Playback mode drives two

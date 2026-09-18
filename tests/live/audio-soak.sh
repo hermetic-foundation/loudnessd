@@ -98,6 +98,7 @@ wireplumber_log=$output.wireplumber.log
 daemon_log=$output.daemon.log
 top_output=$output.pipewire-top.txt
 profiler_error_output=$output.profiler-errors.tsv
+log_growth_output=$output.log-growth.tsv
 summary_output=$output.summary.json
 private_env=(env
   PIPEWIRE_RUNTIME_DIR="$test_runtime"
@@ -1214,6 +1215,10 @@ node_max_running_error() {
   ' "$top_output"
 }
 
+daemon_log_initial_bytes=$(stat -c %s "$daemon_log")
+server_log_initial_bytes=$(stat -c %s "$server_log")
+wireplumber_log_initial_bytes=$(stat -c %s "$wireplumber_log")
+
 "${private_env[@]}" pw-top -b -n "$((duration + 2))" >"$top_output" &
 top_pid=$!
 
@@ -1286,6 +1291,28 @@ if ! wait "$top_pid"; then
   exit 1
 fi
 top_pid=
+
+printf 'component\tinitial_bytes\tfinal_bytes\tdelta_bytes\n' >"$log_growth_output"
+check_log_growth() {
+  local component=$1
+  local path=$2
+  local initial_bytes=$3
+  local final_bytes
+  local delta_bytes
+  final_bytes=$(stat -c %s "$path")
+  delta_bytes=$((final_bytes - initial_bytes))
+  printf '%s\t%s\t%s\t%s\n' \
+    "$component" "$initial_bytes" "$final_bytes" "$delta_bytes" \
+    >>"$log_growth_output"
+  if (( delta_bytes != 0 )); then
+    printf '%s log grew by %d bytes during monitoring\n' \
+      "$component" "$delta_bytes" >&2
+    exit 1
+  fi
+}
+check_log_growth daemon "$daemon_log" "$daemon_log_initial_bytes"
+check_log_growth pipewire "$server_log" "$server_log_initial_bytes"
+check_log_growth wireplumber "$wireplumber_log" "$wireplumber_log_initial_bytes"
 
 if [[ $mode == limiter ]] && ! jq -e '
   .maximum_limiter_reduction_db > 0.1 and

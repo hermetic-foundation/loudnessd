@@ -71,6 +71,13 @@ Both long-run gates remain open until the harnesses exit successfully and their
 summaries pass every continuity, profiler, process-identity, CPU, control-state,
 and memory assertion.
 
+The active long runs predate test-harness commit `565ec448bc4a`, which makes
+nonzero monitor continuity counters, insufficient playback convergence, and
+resource-memory limit violations fail automatically. Restarting the runs would
+discard their uninterrupted evidence, so this audit will apply those same
+assertions directly to the retained summaries. Every subsequent run enforces
+them in `audio-soak.sh` before returning success.
+
 ## Capture isolation
 
 | Gate | State | Evidence |

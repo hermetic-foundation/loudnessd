@@ -35,3 +35,11 @@ fn pipewire_compatibility_paths_remain_available() {
     type_is_available::<loudnessd::pipewire::routing::transaction::TransitionOperation>();
     type_is_available::<loudnessd::pipewire::routing::RouteHealth>();
 }
+
+#[test]
+fn daemon_config_compatibility_path_remains_available() {
+    fn type_is_available<T>() {}
+
+    type_is_available::<loudnessd::runtime_config::RuntimeConfig>();
+    type_is_available::<loudnessd::daemon::runtime_config::RuntimeConfig>();
+}

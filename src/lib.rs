@@ -7,8 +7,6 @@ pub mod ipc;
 pub mod monitor;
 pub mod normalization;
 pub mod pipewire;
-mod process_metrics;
-pub mod runtime_config;
 pub mod status;
 
 // Compatibility exports for the v0.1 public module paths.
@@ -19,6 +17,7 @@ pub use self::pipewire::routing::backend as pipewire_route_backend;
 pub use self::pipewire::routing::journal as recovery;
 pub use self::pipewire::routing::links as pipewire_links;
 pub use self::pipewire::routing::transaction as route_transaction;
+pub use daemon::runtime_config;
 pub use normalization::control::{
     ApplicationPolicy, ApplicationPolicyOverride, Controller, ControllerBank, ControllerConfig,
     ControllerConfigOverride, Decision, Observation, SignalDomain, StreamState, UserConfig,

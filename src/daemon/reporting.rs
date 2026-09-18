@@ -9,14 +9,13 @@ use crate::{
         graph::GraphState,
         routing::{RouteHealth, route_health},
     },
-    process_metrics,
     status::{
         ControlStatus, DaemonStatus, RouteStatus, SkippedStreamStatus, StreamLifecycle,
         StreamStatus,
     },
 };
 
-use super::ManagedStream;
+use super::{ManagedStream, process_metrics};
 
 pub(super) fn snapshot(
     enabled: bool,

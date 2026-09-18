@@ -37,8 +37,10 @@ use crate::{
 
 mod command;
 mod discovery;
+mod process_metrics;
 mod recovery;
 mod reporting;
+pub mod runtime_config;
 
 use command::Command;
 use discovery::{ChannelReadiness, ChannelSettler, channel_readiness};

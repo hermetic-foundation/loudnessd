@@ -86,6 +86,7 @@ capture_node_id=
 pipewire_pid=
 wireplumber_pid=
 top_pid=
+monitor_pid=
 declare -A baseline_controls=()
 declare -A baseline_targets=()
 host_runtime=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR must be set}
@@ -116,6 +117,10 @@ cleanup() {
   if [[ -n $sink_id ]]; then
     "${private_env[@]}" pw-cli destroy "$sink_id" 2>/dev/null || true
   fi
+  if [[ -n $monitor_pid ]]; then
+    kill "$monitor_pid" 2>/dev/null || true
+    wait "$monitor_pid" 2>/dev/null || true
+  fi
   if [[ -n $daemon_pid ]]; then
     kill -INT "$daemon_pid" 2>/dev/null || true
     wait "$daemon_pid" 2>/dev/null || true
@@ -135,7 +140,8 @@ cleanup() {
   find "$test_runtime" -mindepth 1 -delete 2>/dev/null || true
   rmdir "$test_runtime" 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 mkdir -p "$server_config_dir"
 printf '%s\n' \
@@ -1216,7 +1222,13 @@ monitor_status=0
   --duration "$duration" \
   --interval 1000 \
   --expect-active "$expected_active" \
-  --output "$output" >"$summary_output" || monitor_status=$?
+  --output "$output" >"$summary_output" &
+monitor_pid=$!
+set +e
+wait "$monitor_pid"
+monitor_status=$?
+set -e
+monitor_pid=
 cat "$summary_output"
 
 if ! wait "$top_pid"; then

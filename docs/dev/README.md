@@ -188,7 +188,7 @@ capture streams; disconnect mode requires a normal error exit when the private
 PipeWire server disappears with an active managed route; lifecycle mode
 exercises process and configuration recovery; limiter mode drives deterministic
 low-average, high-crest material; memory mode drives eight independent stereo
-playback applications.
+playback applications from server-side generators and persistent loopbacks.
 Hardware monitors are not loaded. The private graph retains normal PipeWire
 scheduling so callback timing represents the production daemon while its
 runtime directory, daemon, IPC socket, fixtures, and recovery journal remain
@@ -196,13 +196,14 @@ isolated from desktop applications and hardware.
 
 Before monitoring, the harness assigns distinct non-default fixture volumes,
 snapshots each stream's complete PipeWire `Props` control state, and destroys
-and replaces the sink while both application streams remain alive. Replacement
+and replaces the sink while every application stream remains alive. Replacement
 is identified by PipeWire object serial rather than its recyclable global ID,
-and both managed routes must return healthy. Playback mode detaches only its
-private generators before the deliberate fault, then attaches fresh generators
-to the same persistent application nodes while the graph is suspended. This
-prevents fixture buffer starvation from obscuring route recovery and still
-requires loudnessd to recover the original application streams. The harness
+and every managed route must return healthy. Playback and memory modes detach
+only their private generators before the deliberate fault, then attach fresh
+generators to the same persistent application nodes while the graph is
+suspended. This prevents fixture buffer starvation from obscuring route
+recovery and still requires loudnessd to recover the original application
+streams. The harness
 also snapshots the post-recovery target. After pause/resume and monitoring, the
 complete volume, mute, channel-volume, soft-volume, monitor-control, and target
 state must match exactly. A mismatch retains before-and-after diagnostics and
@@ -211,14 +212,12 @@ fails the run.
 Monitoring requires exactly the active-stream count for its selected mode. The
 harness retains NDJSON status, private server and session-manager logs, and one
 continuous `pw-top` timeline spanning the monitoring interval. That timeline
-must contain every required node. Strict playback enforces continuity for each
-generator, loopback transport, application stream, loudnessd filter, and the
-replacement sink. Capture, lifecycle, and limiter modes enforce continuity for
-their fixture and loudnessd filter nodes. All allow at most two initial recovery
-errors and require a zero error-counter increase afterward. Memory mode
-still records every fixture counter, but enforces continuity only for the eight
-loudnessd filters because its ordinary-priority `pw-cat` processes are load
-generators rather than evidence for playback continuity. The retained
+must contain every required node. Strict playback and memory modes enforce
+continuity for each generator, loopback transport, application stream,
+loudnessd filter, and the replacement sink. Capture, lifecycle, and limiter
+modes enforce continuity for their fixture and loudnessd filter nodes. All
+allow at most two initial recovery errors and require a zero error-counter
+increase afterward. The retained
 `*.profiler-errors.tsv` artifact labels each node's role and whether its
 counter is enforced, separating bounded recovery history and observational
 fixture scheduling from daemon continuity failures. Recovery behavior is also

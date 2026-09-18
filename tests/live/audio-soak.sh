@@ -1229,12 +1229,41 @@ wait "$monitor_pid"
 monitor_status=$?
 set -e
 monitor_pid=
-cat "$summary_output"
 
 if (( monitor_status != 0 )); then
   echo "loudnessd monitor failed during the soak" >&2
   exit "$monitor_status"
 fi
+
+if [[ $mode == memory ]] && (( duration >= 3600 )); then
+  one_hour_rss_bytes=
+  final_warm_rss_bytes=
+  while IFS= read -r rss_bytes; do
+    if [[ -z $one_hour_rss_bytes ]]; then
+      one_hour_rss_bytes=$rss_bytes
+    fi
+    final_warm_rss_bytes=$rss_bytes
+  done < <(jq -r '
+    select(.elapsed_milliseconds >= 3600000) |
+    .status.process.rss_bytes // empty
+  ' "$output")
+  if [[ -z $one_hour_rss_bytes || -z $final_warm_rss_bytes ]]; then
+    echo "resource qualification has no complete warm-state RSS interval" >&2
+    exit 1
+  fi
+  post_warmup_rss_growth_bytes=$((final_warm_rss_bytes - one_hour_rss_bytes))
+  jq \
+    --argjson one_hour "$one_hour_rss_bytes" \
+    --argjson growth "$post_warmup_rss_growth_bytes" '
+      . + {
+        one_hour_rss_bytes: $one_hour,
+        post_warmup_rss_growth_bytes: $growth
+      }
+    ' "$summary_output" >"$test_runtime/summary-with-warm-rss.json"
+  mv "$test_runtime/summary-with-warm-rss.json" "$summary_output"
+fi
+
+cat "$summary_output"
 
 if ! jq -e --argjson expected "$expected_active" '
   .samples > 0 and
@@ -1288,6 +1317,15 @@ if [[ $mode == memory ]] && ! jq -e '
   .rss_growth_bytes < 2097152
 ' "$summary_output" >/dev/null; then
   echo "resource qualification exceeded the resident-memory bounds" >&2
+  exit 1
+fi
+
+if [[ $mode == memory ]] && (( duration >= 3600 )) && ! jq -e '
+  .one_hour_rss_bytes != null and
+  .post_warmup_rss_growth_bytes != null and
+  .post_warmup_rss_growth_bytes < 2097152
+' "$summary_output" >/dev/null; then
+  echo "resource qualification exceeded the warm-state RSS growth bound" >&2
   exit 1
 fi
 

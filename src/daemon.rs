@@ -659,6 +659,15 @@ pub fn run(
         daemon.process_requests(&control_server);
     }
     if let Some(error) = connection_error.borrow_mut().take() {
+        // A broken PipeWire core can leave client-side proxies and filters in
+        // a partially destroyed state. Calling their normal destructors may
+        // re-enter already-freed native objects. The process is about to exit,
+        // so retain the disconnected object graph and let the OS reclaim it.
+        std::mem::forget(daemon);
+        std::mem::forget(_registry_listener);
+        std::mem::forget(_core_listener);
+        std::mem::forget(context);
+        std::mem::forget(main_loop);
         return Err(format!("PipeWire connection failed: {error}").into());
     }
     if daemon.bypass_all() {

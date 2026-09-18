@@ -148,6 +148,7 @@
                 harnesses = [
                   ./tests/live/audio-soak.sh
                   ./tests/live/hardware-rate-matrix.sh
+                  ./tests/live/suspend-resume.sh
                 ];
               }
               ''

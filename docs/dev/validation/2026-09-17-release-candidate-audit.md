@@ -7,7 +7,7 @@ In progress. This audit applies the objective criteria in
 not declare the project stable while any required evidence below remains open.
 
 - Functional package revision: `6680c9fba550`
-- Evidence-contract `main`: `0b37f3f5c839`
+- Evidence-contract `main`: `d3d71a430e26`
 - Functional package closure:
   `/nix/store/az3y42gva3y9vy1x73i8x4zfrfy2p5vm-loudnessd-0.1.0`
 - Host: `midi-desktop-1`, x86_64 Linux 6.18.51
@@ -99,7 +99,9 @@ will start only after playback reaches a successful terminal state, avoiding
 the contention that invalidated the concurrent evidence. The current playback
 run began with both filter counters at zero, fixture recovery counters within
 the allowed baseline of 2, and loudnessd's processing thread at realtime
-priority 20.
+priority 20. Commit `d3d71a430e26` also makes the harness reject playback CPU
+at or above the documented 5% single-core budget; the sequenced handoff applies
+the same predicate to this already-running immutable harness snapshot.
 
 ## Capture isolation
 

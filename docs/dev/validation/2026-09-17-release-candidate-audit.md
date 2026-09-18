@@ -149,7 +149,12 @@ playback qualification records. The controlled Scarlett profile-cycle result
 is recorded in
 [`2026-09-17-device-reconnect.md`](2026-09-17-device-reconnect.md), together
 with kernel USB removal and re-enumeration. Suspend remains open and will run
-before the replacement bounded soaks.
+after the replacement bounded soaks. Unattended wake preflight found that the
+only RTC advertises wake from S4 rather than suspend-to-RAM and exposes no
+`wakealarm`; `rtcwake` rejected the alarm before suspending. A systemd
+`WakeSystem=yes` timer was also rejected by the kernel with `Operation not
+supported`. Neither probe entered sleep. The final suspend qualification
+therefore requires a manual keyboard or power-button wake.
 
 ## Codebase audit
 

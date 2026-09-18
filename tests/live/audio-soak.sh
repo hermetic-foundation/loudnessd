@@ -160,6 +160,12 @@ printf '%s\n' \
   'context.spa-libs = {' \
   '  audiotestsrc = audiotestsrc/libspa-audiotestsrc' \
   '}' >"$server_config_dir/10-audiotestsrc.conf"
+printf '%s\n' \
+  'context.properties = {' \
+  '  module.profiler.args = {' \
+  '    profile.interval.ms = 100' \
+  '  }' \
+  '}' >"$server_config_dir/10-profiler.conf"
 if [[ $mode == playback ]]; then
   printf '%s\n' \
     'context.modules = [' \

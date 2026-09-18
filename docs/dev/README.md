@@ -175,10 +175,12 @@ The bounded playback gain-path qualification is recorded in
 
 `tests/live/audio-soak.sh` starts a private PipeWire daemon and a policy-only
 WirePlumber instance in a temporary runtime directory. Playback mode drives two
-varied 48 kHz stereo playback streams from server-side real-time generators,
-through persistent loopback application nodes, and into a disposable null sink.
-The source levels and waveforms cycle through quiet, loud, silent, and
-intermittent intervals without an ordinary-priority file-feeder process.
+varied 48 kHz stereo playback streams from pull-driven server-side generators,
+through server-loaded persistent loopback application nodes, and into a
+disposable null sink. Every fixture-processing node therefore runs on the
+private PipeWire daemon's real-time data loop. The source levels and waveforms
+cycle through quiet, loud, silent, and intermittent intervals without an
+ordinary-priority file-feeder or transport process.
 Capture mode uses one application identity with simultaneous playback and
 capture streams; lifecycle mode exercises process and configuration recovery;
 limiter mode drives deterministic low-average, high-crest material; memory mode

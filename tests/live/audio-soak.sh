@@ -1348,9 +1348,10 @@ if [[ $mode == playback ]] && ! jq -e '
   .convergence_eligible_observations > 0 and
   .convergence_ratio >= 0.95 and
   .maximum_output_true_peak_dbtp != null and
-  .maximum_output_true_peak_dbtp <= -0.95
+  .maximum_output_true_peak_dbtp <= -0.95 and
+  .average_cpu_percent < 5.0
 ' "$summary_output" >/dev/null; then
-  echo "playback qualification failed gain, convergence, or peak coverage" >&2
+  echo "playback qualification failed gain, convergence, peak, or CPU coverage" >&2
   exit 1
 fi
 

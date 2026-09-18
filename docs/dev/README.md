@@ -212,7 +212,9 @@ fails the run.
 Monitoring requires exactly the active-stream count for its selected mode. The
 harness retains NDJSON status, private server and session-manager logs, and one
 continuous `pw-top` timeline spanning the monitoring interval. That timeline
-must contain every required node. Strict playback and memory modes enforce
+uses PipeWire's one-second profiler interval, matching `pw-top`'s batch output
+cadence without profiling every graph quantum. It must contain every required
+node. Strict playback and memory modes enforce
 continuity for each generator, loopback transport, application stream,
 loudnessd filter, and the replacement sink. Capture, lifecycle, and limiter
 modes enforce continuity for their fixture and loudnessd filter nodes. All

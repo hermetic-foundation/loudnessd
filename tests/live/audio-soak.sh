@@ -1274,13 +1274,19 @@ if ! jq -e --argjson expected "$expected_active" '
   .samples > 0 and
   .ipc_failures == 0 and
   .daemon_restarts == 0 and
+  .expected_active_streams == $expected and
   .minimum_active_streams == $expected and
   .maximum_active_streams == $expected and
   .active_stream_shortfall_observations == 0 and
   .skipped_stream_observations == 0 and
   .maximum_skipped_streams == 0 and
   .unhealthy_route_observations == 0 and
-  .stalled_callback_observations == 0
+  .stalled_callback_observations == 0 and
+  .initial_rss_bytes != null and
+  .final_rss_bytes != null and
+  .peak_rss_bytes != null and
+  .rss_growth_bytes != null and
+  .average_cpu_percent != null
 ' "$summary_output" >/dev/null; then
   echo "soak monitor reported a continuity, routing, or process-identity failure" >&2
   exit 1

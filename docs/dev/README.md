@@ -175,11 +175,14 @@ The bounded playback gain-path qualification is recorded in
 
 `tests/live/audio-soak.sh` starts a private PipeWire daemon and a policy-only
 WirePlumber instance in a temporary runtime directory. Playback mode drives two
-varied 48 kHz stereo playback streams into a disposable null sink; capture mode
-uses one application identity with simultaneous playback and capture streams;
-lifecycle mode exercises process and configuration recovery; limiter mode
-drives deterministic low-average, high-crest material; memory mode drives eight
-independent stereo playback applications.
+varied 48 kHz stereo playback streams from server-side real-time generators,
+through persistent loopback application nodes, and into a disposable null sink.
+The source levels and waveforms cycle through quiet, loud, silent, and
+intermittent intervals without an ordinary-priority file-feeder process.
+Capture mode uses one application identity with simultaneous playback and
+capture streams; lifecycle mode exercises process and configuration recovery;
+limiter mode drives deterministic low-average, high-crest material; memory mode
+drives eight independent stereo playback applications.
 Hardware monitors are not loaded. The private graph retains normal PipeWire
 scheduling so callback timing represents the production daemon while its
 runtime directory, daemon, IPC socket, fixtures, and recovery journal remain
@@ -189,17 +192,24 @@ Before monitoring, the harness assigns distinct non-default fixture volumes,
 snapshots each stream's complete PipeWire `Props` control state, and destroys
 and replaces the sink while both application streams remain alive. Replacement
 is identified by PipeWire object serial rather than its recyclable global ID,
-and both managed routes must return healthy. The harness also snapshots the
-post-recovery target. After pause/resume and monitoring, the complete volume,
-mute, channel-volume, soft-volume, monitor-control, and target state must match
-exactly. A mismatch retains before-and-after diagnostics and fails the run.
+and both managed routes must return healthy. Playback mode detaches only its
+private generators before the deliberate fault, then attaches fresh generators
+to the same persistent application nodes while the graph is suspended. This
+prevents fixture buffer starvation from obscuring route recovery and still
+requires loudnessd to recover the original application streams. The harness
+also snapshots the post-recovery target. After pause/resume and monitoring, the
+complete volume, mute, channel-volume, soft-volume, monitor-control, and target
+state must match exactly. A mismatch retains before-and-after diagnostics and
+fails the run.
 
 Monitoring requires exactly the active-stream count for its selected mode. The
 harness retains NDJSON status, private server and session-manager logs, and one
 continuous `pw-top` timeline spanning the monitoring interval. That timeline
-must contain every fixture and loudnessd filter node. Playback, capture,
-lifecycle, and limiter modes enforce a zero error-counter increase for both
-node roles after allowing at most two initial recovery errors. Memory mode
+must contain every required node. Strict playback enforces continuity for each
+generator, loopback transport, application stream, loudnessd filter, and the
+replacement sink. Capture, lifecycle, and limiter modes enforce continuity for
+their fixture and loudnessd filter nodes. All allow at most two initial recovery
+errors and require a zero error-counter increase afterward. Memory mode
 still records every fixture counter, but enforces continuity only for the eight
 loudnessd filters because its ordinary-priority `pw-cat` processes are load
 generators rather than evidence for playback continuity. The retained

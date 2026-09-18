@@ -33,7 +33,8 @@ lifecycle behavior depend on a live PipeWire graph.
   without a daemon restart or skipped stream. Error counters immediately after
   this deliberate fault are retained and may not exceed two errors per node.
 - The harness retains one continuous profiler timeline across the steady
-  monitoring interval. Every intended generator and loudnessd filter remains
+  monitoring interval. Every generator, loopback transport, application
+  stream, loudnessd filter, and sink in the strict playback signal path remains
   present, and its PipeWire error counter does not increase from the first
   running observation. The initial, maximum, and delta counters are retained in
   the profiler-error artifact.

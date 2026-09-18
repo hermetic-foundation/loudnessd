@@ -2,13 +2,12 @@
 
 use std::time::{Duration, Instant};
 
-use pipewire::loop_::Timeout;
+use ::pipewire::loop_::Timeout;
 
 use super::{Daemon, ManagedStream};
-use crate::{
-    pipewire_backend::{GraphState, PortDirection},
-    pipewire_links::OwnedLinks,
-    routing::{LinkSpec, RoutePlan},
+use crate::pipewire::{
+    graph::{GraphState, PortDirection},
+    routing::{LinkSpec, RoutePlan, links::OwnedLinks},
 };
 
 impl Daemon {

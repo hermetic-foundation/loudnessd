@@ -6,8 +6,8 @@ use std::{
     sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
 };
 
+use ::pipewire::sys;
 use ebur128_stream::Channel;
-use pipewire::sys;
 
 use super::{MeterSnapshot, PortDirection};
 use crate::normalization::dsp::{
@@ -277,7 +277,7 @@ fn option_f32_from_bits(bits: u32) -> Option<f32> {
 
 pub(super) unsafe extern "C" fn callback(
     data: *mut c_void,
-    position: *mut pipewire::spa::sys::spa_io_position,
+    position: *mut ::pipewire::spa::sys::spa_io_position,
 ) {
     // SAFETY: PipeWire invokes this callback with the data pointer supplied to
     // the filter and a position valid for this process cycle.
@@ -428,7 +428,7 @@ fn limit_output_ports(
 }
 
 pub(super) fn process_sample_rate(
-    position: &pipewire::spa::sys::spa_io_position,
+    position: &::pipewire::spa::sys::spa_io_position,
     fallback: Option<u32>,
 ) -> Option<u32> {
     let rate = position.clock.rate;

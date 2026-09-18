@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
+use ::pipewire::loop_::Timeout;
 use ebur128_stream::Channel;
-use pipewire::loop_::Timeout;
 
 use super::{
     process::{
@@ -33,11 +33,11 @@ fn rejects_invalid_names_before_touching_pipewire() {
 fn maps_port_directions_to_the_pipewire_abi() {
     assert_eq!(
         raw_direction(PortDirection::Input),
-        pipewire::spa::sys::SPA_DIRECTION_INPUT
+        ::pipewire::spa::sys::SPA_DIRECTION_INPUT
     );
     assert_eq!(
         raw_direction(PortDirection::Output),
-        pipewire::spa::sys::SPA_DIRECTION_OUTPUT
+        ::pipewire::spa::sys::SPA_DIRECTION_OUTPUT
     );
 }
 
@@ -219,7 +219,7 @@ fn meter_snapshots_are_sequenced() {
 
 #[test]
 fn process_rate_uses_the_graph_clock_and_validates_the_fraction() {
-    let mut position: pipewire::spa::sys::spa_io_position = unsafe { std::mem::zeroed() };
+    let mut position: ::pipewire::spa::sys::spa_io_position = unsafe { std::mem::zeroed() };
     position.clock.rate.num = 1;
     position.clock.rate.denom = 44_100;
     assert_eq!(process_sample_rate(&position, Some(48_000)), Some(44_100));
@@ -231,7 +231,7 @@ fn process_rate_uses_the_graph_clock_and_validates_the_fraction() {
 #[test]
 #[ignore = "requires a live PipeWire user session"]
 fn live_unconnected_filter_owns_ports_without_registering_a_node() {
-    let main_loop = pipewire::main_loop::MainLoopRc::new(None).unwrap();
+    let main_loop = ::pipewire::main_loop::MainLoopRc::new(None).unwrap();
     let mut filter = UnconnectedFilter::new(main_loop.loop_(), "loudnessd-test").unwrap();
     filter
         .add_mono_port(PortDirection::Input, "input_FL", "FL")
@@ -248,7 +248,7 @@ fn live_unconnected_filter_owns_ports_without_registering_a_node() {
 #[test]
 #[ignore = "requires a live PipeWire user session"]
 fn live_filter_registers_an_inactive_node() {
-    let main_loop = pipewire::main_loop::MainLoopRc::new(None).unwrap();
+    let main_loop = ::pipewire::main_loop::MainLoopRc::new(None).unwrap();
     let mut filter = UnconnectedFilter::new(main_loop.loop_(), "loudnessd-test").unwrap();
     filter
         .add_mono_port(PortDirection::Input, "input_FL", "FL")
@@ -282,8 +282,8 @@ fn live_filter_registers_an_inactive_node() {
 #[test]
 #[ignore = "requires a live PipeWire user session"]
 fn live_core_created_filter_retains_its_core_until_destroyed() {
-    let main_loop = pipewire::main_loop::MainLoopRc::new(None).unwrap();
-    let context = pipewire::context::ContextRc::new(&main_loop, None).unwrap();
+    let main_loop = ::pipewire::main_loop::MainLoopRc::new(None).unwrap();
+    let context = ::pipewire::context::ContextRc::new(&main_loop, None).unwrap();
     let core = context.connect_rc(None).unwrap();
     let filter = UnconnectedFilter::new_on_core(&core, "loudnessd-core-lifetime-test").unwrap();
 
@@ -295,8 +295,8 @@ fn live_core_created_filter_retains_its_core_until_destroyed() {
 #[test]
 #[ignore = "requires a live PipeWire user session"]
 fn live_native_destruction_prevents_a_second_destroy_on_drop() {
-    let main_loop = pipewire::main_loop::MainLoopRc::new(None).unwrap();
-    let context = pipewire::context::ContextRc::new(&main_loop, None).unwrap();
+    let main_loop = ::pipewire::main_loop::MainLoopRc::new(None).unwrap();
+    let context = ::pipewire::context::ContextRc::new(&main_loop, None).unwrap();
     let core = context.connect_rc(None).unwrap();
     let filter = UnconnectedFilter::new_on_core(&core, "loudnessd-destroy-test").unwrap();
 

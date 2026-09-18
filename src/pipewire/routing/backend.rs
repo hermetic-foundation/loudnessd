@@ -7,14 +7,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use pipewire::{core::CoreRc, loop_::Timeout, main_loop::MainLoopRc, registry::RegistryRc};
+use ::pipewire::{core::CoreRc, loop_::Timeout, main_loop::MainLoopRc, registry::RegistryRc};
 
-use crate::{
-    pipewire_backend::GraphState,
-    pipewire_filter::ConnectedFilter,
-    pipewire_links::OwnedLinks,
-    route_transaction::RouteBackend,
-    routing::{LinkSpec, OriginalLink},
+use crate::pipewire::{
+    filter::ConnectedFilter,
+    graph::GraphState,
+    routing::{LinkSpec, OriginalLink, links::OwnedLinks, transaction::RouteBackend},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -229,11 +227,15 @@ impl RouteBackend for PipewireRouteBackend<'_> {
 mod tests {
     use super::*;
     use crate::{
-        SignalDomain,
-        pipewire_backend::{PortDirection as GraphPortDirection, track_graph},
-        pipewire_filter::{PortDirection, UnconnectedFilter},
-        route_transaction::{bypass, install, release},
-        routing::{LinkEndpoint, plan_route},
+        normalization::SignalDomain,
+        pipewire::{
+            filter::{PortDirection, UnconnectedFilter},
+            graph::{PortDirection as GraphPortDirection, track_graph},
+            routing::{
+                LinkEndpoint, plan_route,
+                transaction::{bypass, install, release},
+            },
+        },
     };
 
     fn pump_until(main_loop: &MainLoopRc, predicate: impl Fn() -> bool) {
@@ -295,7 +297,7 @@ mod tests {
     #[ignore = "requires a live PipeWire user session"]
     fn live_route_install_and_bypass_touch_only_disposable_nodes() {
         let main_loop = MainLoopRc::new(None).unwrap();
-        let context = pipewire::context::ContextRc::new(&main_loop, None).unwrap();
+        let context = ::pipewire::context::ContextRc::new(&main_loop, None).unwrap();
         let core = context.connect_rc(None).unwrap();
         let registry = core.get_registry_rc().unwrap();
         let (graph, _listener) = track_graph(&registry);
@@ -416,7 +418,7 @@ mod tests {
     #[ignore = "requires a live PipeWire user session"]
     fn live_install_cleans_up_when_source_exits_after_staging() {
         let main_loop = MainLoopRc::new(None).unwrap();
-        let context = pipewire::context::ContextRc::new(&main_loop, None).unwrap();
+        let context = ::pipewire::context::ContextRc::new(&main_loop, None).unwrap();
         let core = context.connect_rc(None).unwrap();
         let registry = core.get_registry_rc().unwrap();
         let (graph, _listener) = track_graph(&registry);
@@ -530,8 +532,8 @@ mod tests {
             Ok(active) => release(&mut backend, active).unwrap(),
             Err(error) => assert!(matches!(
                 error.operation,
-                crate::route_transaction::TransitionOperation::RemoveOriginal
-                    | crate::route_transaction::TransitionOperation::ActivateFilter
+                crate::pipewire::routing::transaction::TransitionOperation::RemoveOriginal
+                    | crate::pipewire::routing::transaction::TransitionOperation::ActivateFilter
             )),
         }
         pump_until(&main_loop, || {

@@ -13,19 +13,24 @@ use std::{
     time::{Duration, Instant},
 };
 
-use pipewire::{context::ContextRc, loop_::Timeout, main_loop::MainLoopRc};
+use ::pipewire::{context::ContextRc, loop_::Timeout, main_loop::MainLoopRc};
 use signal_hook::consts::signal::{SIGINT, SIGTERM};
 
 use crate::{
     ipc::{ControlServer, write_response},
     normalization::{ControllerBank, SignalDomain, UserConfig, stream::StreamControl},
-    pipewire_backend::{DiscoveredStream, GraphState, track_graph},
-    pipewire_filter::{ConnectedFilter, PortDirection, UnconnectedFilter},
-    pipewire_links::OwnedLinks,
-    pipewire_route_backend::PipewireRouteBackend,
-    recovery::{RecoveryJournal, path_for_socket},
-    route_transaction::{ActiveRoute, bypass, install, release},
-    routing::{RouteHealth, RoutePlanError, plan_route, route_health},
+    pipewire::{
+        filter::{ConnectedFilter, PortDirection, UnconnectedFilter},
+        graph::{DiscoveredStream, GraphState, track_graph},
+        routing::{
+            RouteHealth, RoutePlanError,
+            backend::PipewireRouteBackend,
+            journal::{RecoveryJournal, path_for_socket},
+            links::OwnedLinks,
+            plan_route, route_health,
+            transaction::{ActiveRoute, bypass, install, release},
+        },
+    },
     runtime_config::RuntimeConfig,
     status::{DaemonStatus, SkippedStreamStatus},
 };
@@ -59,8 +64,8 @@ enum ManagedStream {
 
 struct Daemon {
     main_loop: MainLoopRc,
-    core: pipewire::core::CoreRc,
-    registry: pipewire::registry::RegistryRc,
+    core: ::pipewire::core::CoreRc,
+    registry: ::pipewire::registry::RegistryRc,
     graph: Rc<std::cell::RefCell<GraphState>>,
     controllers: ControllerBank,
     managed: HashMap<u32, ManagedStream>,
@@ -677,7 +682,7 @@ pub fn run(
 }
 
 fn is_fatal_core_error(id: u32, result: i32) -> bool {
-    id == pipewire::core::PW_ID_CORE && result == -libc::EPIPE
+    id == ::pipewire::core::PW_ID_CORE && result == -libc::EPIPE
 }
 
 #[cfg(test)]
@@ -687,12 +692,12 @@ mod tests {
     #[test]
     fn only_broken_core_connections_are_fatal() {
         assert!(is_fatal_core_error(
-            pipewire::core::PW_ID_CORE,
+            ::pipewire::core::PW_ID_CORE,
             -libc::EPIPE
         ));
         assert!(!is_fatal_core_error(6, -libc::EEXIST));
         assert!(!is_fatal_core_error(
-            pipewire::core::PW_ID_CORE,
+            ::pipewire::core::PW_ID_CORE,
             -libc::EEXIST
         ));
     }

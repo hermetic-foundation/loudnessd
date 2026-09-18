@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use super::{ControllerBank, Decision, Observation, SignalDomain};
-use crate::pipewire_filter::{ConnectedFilter, MeterSnapshot};
+use crate::pipewire::filter::{ConnectedFilter, MeterSnapshot};
 
 pub trait NormalizationEndpoint {
     fn latest_meter_snapshot(&self) -> Option<MeterSnapshot>;

@@ -6,7 +6,7 @@ use std::{
     rc::Rc,
 };
 
-use pipewire::{
+use ::pipewire::{
     context::ContextRc,
     loop_::Signal,
     main_loop::MainLoopRc,
@@ -350,7 +350,7 @@ where
     }
 }
 
-pub fn snapshot_streams() -> Result<Vec<DiscoveredStream>, pipewire::Error> {
+pub fn snapshot_streams() -> Result<Vec<DiscoveredStream>, ::pipewire::Error> {
     let main_loop = MainLoopRc::new(None)?;
     let context = ContextRc::new(&main_loop, None)?;
     let core = context.connect_rc(None)?;
@@ -368,7 +368,7 @@ pub fn snapshot_streams() -> Result<Vec<DiscoveredStream>, pipewire::Error> {
     Ok(snapshot)
 }
 
-pub fn snapshot_graph() -> Result<Vec<GraphObject>, pipewire::Error> {
+pub fn snapshot_graph() -> Result<Vec<GraphObject>, ::pipewire::Error> {
     let main_loop = MainLoopRc::new(None)?;
     let context = ContextRc::new(&main_loop, None)?;
     let core = context.connect_rc(None)?;
@@ -394,9 +394,9 @@ pub fn snapshot_graph() -> Result<Vec<GraphObject>, pipewire::Error> {
 }
 
 fn sync_graph_metadata(
-    core: &pipewire::core::CoreRc,
+    core: &::pipewire::core::CoreRc,
     main_loop: &MainLoopRc,
-) -> Result<(), pipewire::Error> {
+) -> Result<(), ::pipewire::Error> {
     for _ in 0..2 {
         core.sync(0)?;
         main_loop.run();
@@ -404,7 +404,7 @@ fn sync_graph_metadata(
     Ok(())
 }
 
-pub fn monitor_streams<F>(callback: F) -> Result<(), pipewire::Error>
+pub fn monitor_streams<F>(callback: F) -> Result<(), ::pipewire::Error>
 where
     F: FnMut(RegistryEvent) + 'static,
 {
@@ -472,7 +472,7 @@ where
     Ok(())
 }
 
-pub fn monitor_graph<F>(callback: F) -> Result<(), pipewire::Error>
+pub fn monitor_graph<F>(callback: F) -> Result<(), ::pipewire::Error>
 where
     F: FnMut(GraphEvent) + 'static,
 {

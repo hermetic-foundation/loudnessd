@@ -9,7 +9,7 @@ use std::{
     rc::Rc,
 };
 
-use pipewire::{core::CoreRc, loop_::Loop, properties::properties, sys};
+use ::pipewire::{core::CoreRc, loop_::Loop, properties::properties, sys};
 
 mod process;
 
@@ -144,10 +144,10 @@ fn filter_name(name: &str) -> Result<CString, FilterCreateError> {
     CString::new(name).map_err(|_| FilterCreateError::NameContainsNul)
 }
 
-fn raw_direction(direction: PortDirection) -> pipewire::spa::sys::spa_direction {
+fn raw_direction(direction: PortDirection) -> ::pipewire::spa::sys::spa_direction {
     match direction {
-        PortDirection::Input => pipewire::spa::sys::SPA_DIRECTION_INPUT,
-        PortDirection::Output => pipewire::spa::sys::SPA_DIRECTION_OUTPUT,
+        PortDirection::Input => ::pipewire::spa::sys::SPA_DIRECTION_INPUT,
+        PortDirection::Output => ::pipewire::spa::sys::SPA_DIRECTION_OUTPUT,
     }
 }
 
@@ -156,7 +156,7 @@ pub struct UnconnectedFilter {
     _core: Option<CoreRc>,
     ports: Vec<OwnedPort>,
     callback_data: Box<FilterCallbackData>,
-    listener: Option<Box<pipewire::spa::sys::spa_hook>>,
+    listener: Option<Box<::pipewire::spa::sys::spa_hook>>,
     _main_thread_only: PhantomData<Rc<()>>,
 }
 
@@ -211,7 +211,7 @@ impl UnconnectedFilter {
     }
 
     pub fn new_on_core(
-        core: &pipewire::core::CoreRc,
+        core: &::pipewire::core::CoreRc,
         name: &str,
     ) -> Result<Self, FilterCreateError> {
         let name = filter_name(name)?;
@@ -231,14 +231,14 @@ impl UnconnectedFilter {
         let raw = NonNull::new(raw).ok_or(FilterCreateError::CreationFailed)?;
         // The heap allocation keeps the hook address stable until Drop removes
         // it before destroying the filter.
-        let mut listener: Box<pipewire::spa::sys::spa_hook> =
+        let mut listener: Box<::pipewire::spa::sys::spa_hook> =
             Box::new(unsafe { std::mem::zeroed() });
         // SAFETY: raw is valid, listener has a stable heap address, the static
         // event table outlives the filter, and callback_data stays boxed.
         unsafe {
             sys::pw_filter_add_listener(
                 raw.as_ptr(),
-                (&mut *listener as *mut pipewire::spa::sys::spa_hook).cast(),
+                (&mut *listener as *mut ::pipewire::spa::sys::spa_hook).cast(),
                 &FILTER_EVENTS,
                 (&mut *callback_data as *mut FilterCallbackData).cast(),
             );
@@ -407,7 +407,7 @@ impl Drop for UnconnectedFilter {
             return;
         }
         if let Some(listener) = self.listener.take() {
-            pipewire::spa::utils::hook::remove(*listener);
+            ::pipewire::spa::utils::hook::remove(*listener);
         }
         // SAFETY: self uniquely owns raw. PipeWire stops callbacks before
         // returning, and callback_data remains alive until after this method.

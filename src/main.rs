@@ -9,7 +9,7 @@ use std::{
 use loudnessd::{
     ControllerBank, Decision, Observation, SignalDomain, UserConfig, daemon, ipc,
     monitor::{self, MonitorOptions},
-    pipewire_backend::snapshot_streams,
+    pipewire::graph::snapshot_streams,
 };
 
 fn usage() {

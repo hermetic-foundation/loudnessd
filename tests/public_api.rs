@@ -14,3 +14,24 @@ fn normalization_compatibility_paths_remain_available() {
     type_is_available::<loudnessd::normalization::dsp::meter::LoudnessMeter>();
     type_is_available::<loudnessd::normalization::stream::StreamControl>();
 }
+
+#[test]
+fn pipewire_compatibility_paths_remain_available() {
+    fn type_is_available<T>() {}
+
+    type_is_available::<loudnessd::pipewire_backend::GraphState>();
+    type_is_available::<loudnessd::pipewire_filter::FilterState>();
+    type_is_available::<loudnessd::pipewire_links::OwnedLinks>();
+    type_is_available::<loudnessd::pipewire_route_backend::PipewireRouteError>();
+    type_is_available::<loudnessd::recovery::RecoveryJournal>();
+    type_is_available::<loudnessd::route_transaction::TransitionOperation>();
+    type_is_available::<loudnessd::routing::RouteHealth>();
+
+    type_is_available::<loudnessd::pipewire::graph::GraphState>();
+    type_is_available::<loudnessd::pipewire::filter::FilterState>();
+    type_is_available::<loudnessd::pipewire::routing::links::OwnedLinks>();
+    type_is_available::<loudnessd::pipewire::routing::backend::PipewireRouteError>();
+    type_is_available::<loudnessd::pipewire::routing::journal::RecoveryJournal>();
+    type_is_available::<loudnessd::pipewire::routing::transaction::TransitionOperation>();
+    type_is_available::<loudnessd::pipewire::routing::RouteHealth>();
+}

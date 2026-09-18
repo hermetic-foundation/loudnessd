@@ -3,11 +3,13 @@
 use std::collections::HashMap;
 
 use crate::{
-    ControllerBank, ControllerConfig, Decision, SignalDomain,
-    pipewire_backend::GraphState,
-    pipewire_filter::FilterState,
+    normalization::{ControllerBank, ControllerConfig, Decision, SignalDomain},
+    pipewire::{
+        filter::FilterState,
+        graph::GraphState,
+        routing::{RouteHealth, route_health},
+    },
     process_metrics,
-    routing::{RouteHealth, route_health},
     status::{
         ControlStatus, DaemonStatus, RouteStatus, SkippedStreamStatus, StreamLifecycle,
         StreamStatus,

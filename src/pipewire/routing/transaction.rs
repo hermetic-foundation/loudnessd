@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::routing::{LinkSpec, OriginalLink, RoutePlan};
+use super::{LinkSpec, OriginalLink, RoutePlan};
 
 pub trait RouteBackend {
     type LinkSet;
@@ -162,9 +162,11 @@ pub fn release<B: RouteBackend<LinkSet = L>, L>(
 mod tests {
     use super::*;
     use crate::{
-        SignalDomain,
-        pipewire_backend::{DiscoveredLink, DiscoveredPort, PortDirection},
-        routing::plan_route,
+        normalization::SignalDomain,
+        pipewire::{
+            graph::{DiscoveredLink, DiscoveredPort, PortDirection},
+            routing::plan_route,
+        },
     };
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]

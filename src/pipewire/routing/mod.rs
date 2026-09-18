@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+pub mod backend;
+pub mod journal;
+pub mod links;
+pub mod transaction;
+
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -7,10 +12,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    SignalDomain,
-    pipewire_backend::{DiscoveredLink, DiscoveredPort, GraphState, PortDirection},
-};
+use super::graph::{DiscoveredLink, DiscoveredPort, GraphState, PortDirection};
+use crate::normalization::SignalDomain;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LinkEndpoint {
@@ -365,7 +368,7 @@ mod tests {
     fn graph_with(objects: impl IntoIterator<Item = DiscoveredLink>) -> GraphState {
         let mut graph = GraphState::default();
         for link in objects {
-            graph.insert(crate::pipewire_backend::GraphObject::Link(link));
+            graph.insert(crate::pipewire::graph::GraphObject::Link(link));
         }
         graph
     }
@@ -463,16 +466,16 @@ mod tests {
             port(31, 30, PortDirection::Input, "FL"),
             port(32, 30, PortDirection::Output, "FL"),
         ] {
-            healthy.insert(crate::pipewire_backend::GraphObject::Port(discovered_port));
+            healthy.insert(crate::pipewire::graph::GraphObject::Port(discovered_port));
         }
         for discovered_link in [link(41, 10, 11, 30, 31), link(42, 30, 32, 20, 21)] {
-            healthy.insert(crate::pipewire_backend::GraphObject::Link(discovered_link));
+            healthy.insert(crate::pipewire::graph::GraphObject::Link(discovered_link));
         }
         assert_eq!(route_health(&plan, &healthy), RouteHealth::Healthy);
 
         healthy.remove_id(21);
         assert_eq!(route_health(&plan, &healthy), RouteHealth::EndpointsGone);
-        healthy.insert(crate::pipewire_backend::GraphObject::Port(port(
+        healthy.insert(crate::pipewire::graph::GraphObject::Port(port(
             21,
             99,
             PortDirection::Input,
@@ -484,13 +487,13 @@ mod tests {
         assert_eq!(route_health(&plan, &superseded), RouteHealth::Superseded);
 
         let mut broken = GraphState::default();
-        broken.insert(crate::pipewire_backend::GraphObject::Port(port(
+        broken.insert(crate::pipewire::graph::GraphObject::Port(port(
             11,
             10,
             PortDirection::Output,
             "FL",
         )));
-        broken.insert(crate::pipewire_backend::GraphObject::Port(port(
+        broken.insert(crate::pipewire::graph::GraphObject::Port(port(
             21,
             20,
             PortDirection::Input,

@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use pipewire::{
+use ::pipewire::{
     core::CoreRc, link::Link, properties::PropertiesBox, proxy::ProxyT, registry::RegistryRc,
 };
 
-use crate::routing::LinkSpec;
+use super::LinkSpec;
 
 pub struct OwnedLinks {
     links: Vec<Link>,
 }
 
 impl OwnedLinks {
-    pub fn create(core: &CoreRc, specs: &[LinkSpec]) -> Result<Self, pipewire::Error> {
+    pub fn create(core: &CoreRc, specs: &[LinkSpec]) -> Result<Self, ::pipewire::Error> {
         Self::create_with_linger(core, None, specs, false)
     }
 
@@ -19,7 +19,7 @@ impl OwnedLinks {
         core: &CoreRc,
         registry: &RegistryRc,
         specs: &[LinkSpec],
-    ) -> Result<Self, pipewire::Error> {
+    ) -> Result<Self, ::pipewire::Error> {
         Self::create_with_linger(core, Some(registry), specs, true)
     }
 
@@ -28,7 +28,7 @@ impl OwnedLinks {
         registry: Option<&RegistryRc>,
         specs: &[LinkSpec],
         linger: bool,
-    ) -> Result<Self, pipewire::Error> {
+    ) -> Result<Self, ::pipewire::Error> {
         let mut owned = Self {
             links: Vec::with_capacity(specs.len()),
         };
@@ -95,7 +95,7 @@ fn link_properties(spec: LinkSpec, linger: bool) -> PropertiesBox {
     let output_port = spec.output.port_id.to_string();
     let input_node = spec.input.node_id.to_string();
     let input_port = spec.input.port_id.to_string();
-    pipewire::properties::properties! {
+    ::pipewire::properties::properties! {
         "link.output.node" => output_node,
         "link.output.port" => output_port,
         "link.input.node" => input_node,
@@ -112,12 +112,12 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use pipewire::loop_::Timeout;
+    use ::pipewire::loop_::Timeout;
 
     use super::*;
-    use crate::{
-        pipewire_backend::{GraphObject, PortDirection as GraphPortDirection, snapshot_graph},
-        pipewire_filter::{PortDirection, UnconnectedFilter},
+    use crate::pipewire::{
+        filter::{PortDirection, UnconnectedFilter},
+        graph::{GraphObject, PortDirection as GraphPortDirection, snapshot_graph},
         routing::LinkEndpoint,
     };
 
@@ -134,7 +134,7 @@ mod tests {
         }
     }
 
-    fn roundtrip(main_loop: &pipewire::main_loop::MainLoopRc, core: &CoreRc) {
+    fn roundtrip(main_loop: &::pipewire::main_loop::MainLoopRc, core: &CoreRc) {
         let done = Rc::new(Cell::new(false));
         let callback_done = Rc::clone(&done);
         let callback_loop = main_loop.clone();
@@ -142,7 +142,7 @@ mod tests {
         let _listener = core
             .add_listener_local()
             .done(move |id, sequence| {
-                if id == pipewire::core::PW_ID_CORE && sequence == pending {
+                if id == ::pipewire::core::PW_ID_CORE && sequence == pending {
                     callback_done.set(true);
                     callback_loop.quit();
                 }
@@ -170,8 +170,8 @@ mod tests {
     #[test]
     #[ignore = "requires a live PipeWire user session"]
     fn live_link_lifetimes_match_the_linger_policy() {
-        let main_loop = pipewire::main_loop::MainLoopRc::new(None).unwrap();
-        let context = pipewire::context::ContextRc::new(&main_loop, None).unwrap();
+        let main_loop = ::pipewire::main_loop::MainLoopRc::new(None).unwrap();
+        let context = ::pipewire::context::ContextRc::new(&main_loop, None).unwrap();
         let core = context.connect_rc(None).unwrap();
 
         let mut producer =

@@ -10,7 +10,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::routing::LinkSpec;
+use super::LinkSpec;
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -98,7 +98,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::routing::LinkEndpoint;
+    use crate::pipewire::routing::LinkEndpoint;
 
     static NEXT_PATH: AtomicUsize = AtomicUsize::new(0);
 

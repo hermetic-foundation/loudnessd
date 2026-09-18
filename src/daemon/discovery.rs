@@ -6,8 +6,8 @@ use std::{
 };
 
 use crate::{
-    SignalDomain,
-    pipewire_backend::{DiscoveredStream, GraphState, PortDirection},
+    normalization::SignalDomain,
+    pipewire::graph::{DiscoveredStream, GraphState, PortDirection},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -132,7 +132,7 @@ pub(super) fn channel_readiness(stream: &DiscoveredStream, graph: &GraphState) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipewire_backend::{DiscoveredLink, DiscoveredPort, GraphObject, PortDirection};
+    use crate::pipewire::graph::{DiscoveredLink, DiscoveredPort, GraphObject, PortDirection};
 
     fn stream(domain: SignalDomain) -> DiscoveredStream {
         DiscoveredStream {

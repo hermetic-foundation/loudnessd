@@ -163,7 +163,7 @@ printf '%s\n' \
 printf '%s\n' \
   'context.properties = {' \
   '  module.profiler.args = {' \
-  '    profile.interval.ms = 100' \
+  '    profile.interval.ms = 1000' \
   '  }' \
   '}' >"$server_config_dir/10-profiler.conf"
 if [[ $mode == playback ]]; then

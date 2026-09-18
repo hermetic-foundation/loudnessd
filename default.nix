@@ -18,6 +18,7 @@ rustPlatform.buildRustPackage {
       ./Cargo.toml
       ./src
       ./systemd/loudnessd.service
+      ./tests/public_api.rs
     ];
   };
   cargoLock.lockFile = ./Cargo.lock;

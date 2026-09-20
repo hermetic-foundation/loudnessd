@@ -1,1 +1,14 @@
+# Rust build artifacts and backups
 /target/
+*.rs.bk
+
+# Nix build outputs and direnv state
+/result
+/result-*
+/.direnv/
+
+# Local editor and OS files
+*.swp
+*.swo
+*~
+.DS_Store

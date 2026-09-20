@@ -87,6 +87,37 @@ configuration under the user's home directory. The `settings.playback` and
 `boostRateDbPerSecond`, and `cutRateDbPerSecond`. Their defaults match the
 standalone daemon defaults shown below.
 
+The module also enables RTKit and authorizes members of the `audio` group to
+request its bounded real-time scheduling. Add the service user to that group:
+
+```nix
+users.users.example.extraGroups = [ "audio" ];
+```
+
+This matters for lingering systemd user services: they may not belong to a
+seated login session, so RTKit's default polkit policy can deny their requests
+even when desktop applications are authorized. Without real-time scheduling,
+audio filters can miss deadlines and produce dropouts despite low overall CPU
+use. The permission covers all processes of trusted group members, not only
+loudnessd; RTKit still enforces its priority, runtime, and watchdog limits. Use
+`services.loudnessd.realtimeGroup` to choose a dedicated trusted group instead,
+or set it to `null` to leave the existing authorization policy unchanged.
+
+For portable installations, ensure the audio processing thread receives
+real-time scheduling through your distribution's RTKit or resource-limit
+policy. Check the actual thread scheduler, not just a successful-looking
+PipeWire log message:
+
+```console
+pid=$(systemctl --user show loudnessd --property MainPID --value)
+ps -L -p "$pid" -o tid,comm,cls,rtprio
+```
+
+The `data-loop` thread should normally show `RR` and a nonzero real-time
+priority. A `TS` thread with no real-time priority indicates that authorization
+or resource limits need attention. Do not give the entire daemon root access
+to work around this.
+
 An existing TOML file can be used instead of generated settings:
 
 ```nix

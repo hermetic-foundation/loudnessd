@@ -99,6 +99,13 @@ let
     applications = applicationSettings;
   };
   effectiveConfigFile = if cfg.configFile == null then configFile else cfg.configFile;
+  realtimePolicy =
+    lib.replaceStrings
+      [ "@realtimeGroup@" ]
+      [
+        (builtins.toJSON cfg.realtimeGroup)
+      ]
+      (builtins.readFile ./realtime-policy.js.in);
 in
 {
   options.services.loudnessd = {
@@ -118,6 +125,18 @@ in
       description = ''
         Existing TOML configuration to pass to loudnessd. When set, this file is
         authoritative and settings are not used to generate the service configuration.
+      '';
+    };
+
+    realtimeGroup = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = "audio";
+      description = ''
+        Trusted group allowed to acquire RTKit-bounded real-time scheduling,
+        including from systemd user services outside a seated login session.
+        Add service users to this group. The permission covers all processes
+        of group members, not just loudnessd. Set null to retain the system's
+        existing authorization policy.
       '';
     };
 
@@ -191,6 +210,12 @@ in
     );
 
     environment.systemPackages = [ cfg.package ];
+
+    security.rtkit.enable = lib.mkDefault true;
+    security.polkit.extraConfig = lib.mkIf (cfg.realtimeGroup != null) realtimePolicy;
+    users.groups = lib.optionalAttrs (cfg.realtimeGroup != null) {
+      ${cfg.realtimeGroup} = { };
+    };
 
     systemd.user.services.loudnessd = {
       description = "Per-application PipeWire loudness normalization";

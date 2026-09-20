@@ -1,0 +1,6 @@
+polkit.addRule(function(action, subject) {
+    if (action.id === "org.freedesktop.RealtimeKit1.acquire-real-time" &&
+        subject.isInGroup(@realtimeGroup@)) {
+        return polkit.Result.YES;
+    }
+});

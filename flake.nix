@@ -42,6 +42,8 @@
               ./src
             ];
           };
+          # Configuration checks do not execute the daemon or need a Rust rebuild.
+          moduleTestPackage = pkgs.writeShellScriptBin "loudnessd" "exit 1";
           moduleConfiguration = nixpkgs.lib.nixosSystem {
             inherit system;
             modules = [
@@ -49,6 +51,7 @@
               {
                 services.loudnessd = {
                   enable = true;
+                  package = moduleTestPackage;
                   settings.playback.targetLufs = -17.0;
                   settings.applications.browser.capture = false;
                 };
@@ -87,12 +90,39 @@
               {
                 services.loudnessd = {
                   enable = true;
+                  package = moduleTestPackage;
                   configFile = externalConfig;
                 };
               }
             ];
           };
           externalService = externalModuleConfiguration.config.systemd.user.services.loudnessd;
+          realtimePolicy = pkgs.writeText "loudnessd-realtime.rules" moduleConfiguration.config.security.polkit.extraConfig;
+          customRealtimeConfiguration = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                services.loudnessd = {
+                  enable = true;
+                  realtimeGroup = "loudnessd-realtime";
+                };
+              }
+            ];
+          };
+          customRealtimePolicy = pkgs.writeText "loudnessd-custom-realtime.rules" customRealtimeConfiguration.config.security.polkit.extraConfig;
+          existingRealtimeConfiguration = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                services.loudnessd = {
+                  enable = true;
+                  realtimeGroup = null;
+                };
+              }
+            ];
+          };
         in
         {
           package = loudnessd;
@@ -168,6 +198,23 @@
                   XDG_RUNTIME_DIR="$PWD/runtime" \
                   SYSTEMD_UNIT_PATH=${loudnessd}/lib/systemd/user:${pkgs.pipewire}/lib/systemd/user:${pkgs.systemd}/example/systemd/user \
                   systemd-analyze --user verify "$serviceFile"
+                touch "$out"
+              '';
+          realtime-policy =
+            assert moduleConfiguration.config.security.rtkit.enable;
+            assert builtins.hasAttr "audio" moduleConfiguration.config.users.groups;
+            assert builtins.hasAttr "loudnessd-realtime" customRealtimeConfiguration.config.users.groups;
+            assert
+              !(nixpkgs.lib.hasInfix "org.freedesktop.RealtimeKit1.acquire-real-time" existingRealtimeConfiguration.config.security.polkit.extraConfig);
+            pkgs.runCommand "loudnessd-realtime-policy-check"
+              {
+                nativeBuildInputs = [ pkgs.nodejs ];
+                inherit realtimePolicy customRealtimePolicy;
+                policyTest = ./tests/nix/realtime-policy.cjs;
+              }
+              ''
+                node "$policyTest" "$realtimePolicy" audio
+                node "$policyTest" "$customRealtimePolicy" loudnessd-realtime
                 touch "$out"
               '';
           module =

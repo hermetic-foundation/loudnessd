@@ -200,6 +200,11 @@ impl Daemon {
             .streams()
             .map(|stream| stream.node_id)
             .collect();
+        self.controllers.retain_streams(|_, stream_id| {
+            stream_id
+                .parse::<u32>()
+                .is_ok_and(|node_id| present.contains(&node_id))
+        });
         self.managed.retain(|node_id, _| present.contains(node_id));
         self.skipped.retain(|node_id, _| present.contains(node_id));
         self.channel_settler
@@ -505,6 +510,13 @@ impl Daemon {
         let Some(elapsed) = self.control_clock.take_elapsed(Instant::now()) else {
             return;
         };
+        let managed = &self.managed;
+        self.controllers
+            .age_unobserved_streams(elapsed.as_secs_f32(), |_, stream_id| {
+                stream_id.parse::<u32>().ok().is_some_and(|node_id| {
+                    matches!(managed.get(&node_id), Some(ManagedStream::Active { .. }))
+                })
+            });
         for managed in self.managed.values_mut() {
             let ManagedStream::Active {
                 filter, control, ..

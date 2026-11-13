@@ -8,7 +8,9 @@ Live test records are kept as dated reports under [`validation/`](validation/).
 
 The [loudness dynamics design](loudness-dynamics.md) documents the three layers,
 their timing and gain rules, percentile semantics, handover/reload ownership,
-and worked recovery timelines.
+and worked recovery timelines. Its
+[implementation check record](validation/2026-11-12-loudness-dynamics.md)
+separates verified behavior from deployment and release qualification.
 
 Every PipeWire media stream gets independent controller state. Application
 identity is retained for policy and display, but does not collapse multiple

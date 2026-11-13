@@ -2,7 +2,9 @@
 
 This document describes the three-layer implementation added on 2026-11-12.
 It is not a record of deployment or a declaration that all
-[release gates](release-gates.md) have passed.
+[release gates](release-gates.md) have passed. See the
+[implementation validation record](validation/2026-11-12-loudness-dynamics.md)
+for checks performed and remaining qualification work.
 
 ## Intent
 

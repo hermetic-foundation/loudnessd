@@ -42,8 +42,14 @@ lifecycle behavior depend on a live PipeWire graph.
   application process. Audio resumes through a healthy normalized route, or
   loudnessd restores the direct route without user intervention.
 - For non-silent windows that are not gain-clamped or limiter-bound, at least
-  95% of post-filter short-term readings settle within `1.5 LU` of the target
-  after the configured slew time.
+  95% of settled observations place the history-percentile reference plus
+  actual applied gain within `1.5 LU` of the target. For stationary fixtures,
+  post-filter short-term readings must also settle within that tolerance.
+  Intentionally quiet passages are not required to reach the loudness target.
+- A brief loud event triggers an audio-path cut and one-second hold even if it
+  does not change the 30-second P90. A delayed main loop inherits the cut without
+  an upward jump. Default recovery never exceeds `0.2 dB/s` or `+6 dB`, and the
+  main controller does not count early PipeWire wakeups as elapsed control time.
 - No application stream volume, mute state, channel volume, or persistent
   WirePlumber target changes during normalization.
 - Peak output does not exceed the configured limiter threshold, stereo channels

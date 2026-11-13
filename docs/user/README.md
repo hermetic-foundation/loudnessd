@@ -51,7 +51,8 @@ peak limiter's 10 ms lookahead; neither timing means instantaneous prediction.
 
 A single short burst need not move P90, so it may produce only the fast cut and
 its one-second hold, followed by slow recovery. There is no unconditional extra
-30-second hold after every burst.
+30-second hold after every burst. The detailed
+[design and timelines](../dev/loudness-dynamics.md) explain this distinction.
 
 Configuration changes that leave a stream's settings and enabled policy
 unchanged preserve its filter. Necessary filter replacements retain the applied

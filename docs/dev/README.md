@@ -6,19 +6,45 @@ Live test records are kept as dated reports under [`validation/`](validation/).
 
 ## Architecture
 
+The [loudness dynamics design](loudness-dynamics.md) documents the three layers,
+their timing and gain rules, percentile semantics, handover/reload ownership,
+and worked recovery timelines.
+
 Every PipeWire media stream gets independent controller state. Application
 identity is retained for policy and display, but does not collapse multiple
 streams into one gain control. Playback and capture are separate domains, so a
 browser's output and microphone capture cannot modify each other's state.
 
-Playback targets `-16 LUFS`. Capture independently targets `-18 LUFS` and uses
-a slower boost rate. Both domains use silence gates, deadbands, gain limits,
-and asymmetric adjustment rates.
+Playback targets `-16 LUFS`; capture independently targets `-18 LUFS`. Both
+domains cap boost at `+6 dB` and increase gain at no more than `0.2 dB/s`
+(`+1 dB` per five seconds). Playback retains its `-50 LUFS` gate, `0.75 LU`
+deadband, and `24 dB` maximum cut; capture retains its `-55 LUFS` gate,
+`1.0 LU` deadband, and `18 dB` maximum cut. These are generic directional
+defaults, not per-application tuning.
 
 Measurement is incremental and does not retain raw audio. The real-time meter
-keeps K-weighting state and fixed momentary and short-term windows. It measures
-the source before gain, then the controller slews toward the required absolute
-gain rather than accumulating the same loudness error repeatedly.
+keeps K-weighting state and fixed momentary and short-term windows. Each stream
+keeps a bounded 30-second history of momentary 400 ms source-loudness blocks.
+The 100 ms main-controller tick uses the history's P90 as its reference and
+computes an absolute gain target rather than accumulating the same loudness
+error repeatedly. P90 is the rank threshold at or below which roughly 90% of
+the observations fall, not the maximum and not an upper-decile mean. A single
+spike need not immediately affect a populated 30-second P90 history.
+
+The audio path independently applies an immediate fast cut based on current
+momentary loudness, without waiting for the percentile or the next controller
+tick. A fast cut starts a 1-second hold before upward recovery is allowed.
+This hold is separate from percentile/history behavior. The main controller
+inherits the applied attenuation; a stale higher target must not snap gain
+back after a cut. Recovery is subject to the same `0.2 dB/s` upward limit.
+
+Downward controller changes have no ramp by default. The optional legacy
+`cut_rate_db_per_second` accepts an explicit positive rate for compatibility
+with the main controller; omitting it selects immediate cuts. It never slows
+the audio-path fast cut. Normalization changes and their hold do not replace
+the final true-peak limiter or change its fixed 10 ms lookahead. Digital LUFS
+and peak limits are not a medical hearing-safety guarantee or a measurement
+of sound pressure at the listener.
 
 Playback normalization belongs upstream of the system mixer. The controller
 must never compensate for master output gain: changing master volume should
@@ -44,16 +70,18 @@ and splitting them would introduce cross-module coupling without creating a new
 ownership boundary.
 
 The crate root retains the module paths exported by `v0.1.0` as compatibility
-re-exports. New internal code uses the nested canonical paths, while downstream
-users can migrate without a patch-release API break.
+re-exports. New internal code uses the nested canonical paths. Module-path
+compatibility does not imply that controller configuration structs are unchanged;
+the dynamics implementation adds fields and makes the legacy cut rate optional.
 
 ## PipeWire backend
 
 The daemon uses native PipeWire filters rather than recording monitor streams
 through PulseAudio compatibility APIs. One shared PipeWire core owns registry
 tracking, transient links, and per-stream filters. Each filter measures its
-pre-gain signal, applies a smoothly changing normalization gain, and finishes
-with a linked-channel `-1 dBTP` guard. The guard uses the BS.1770 four-times
+pre-gain signal, applies immediate normalization cuts and rate-limited upward
+gain recovery, and finishes with a linked-channel `-1 dBTP` guard. The guard
+uses the BS.1770 four-times
 oversampled detector, a fixed 10 ms lookahead, immediate attenuation, and a
 smooth release. Its peak window and sample delay are allocated before the
 filter becomes active, so the real-time callback does not allocate. One linked
@@ -100,6 +128,18 @@ The generated TOML is a separate host-configuration derivation, not part of
 the application package. This keeps the `loudnessd` binary identical and
 cacheable across machines while allowing each NixOS system closure to carry
 its own policy.
+
+Both directional TOML sections expose `history_window_seconds = 30.0`,
+`history_percentile = 90.0`, and `fast_cut_hold_seconds = 1.0`. The corresponding
+typed NixOS options are `historyWindowSeconds`, `historyPercentile`, and
+`fastCutHoldSeconds`. History duration must be in `(0, 300]` seconds, percentile
+in `(0, 100]`, and hold duration non-negative. Rust validation also rejects
+non-finite numeric values. `cutRateDbPerSecond` has type `nullOr float` and
+defaults to `null`; the module filters null controller values before TOML
+generation because TOML cannot represent null. Explicit positive legacy rates
+are rendered, not silently discarded. `configFile` remains authoritative:
+generated settings and their controller-range assertions do not override an
+external file, whose contents are validated by the daemon.
 
 Runtime control uses a mode-`0600` per-user Unix socket and a `loudnessd msg`
 client, following the command pattern used by compositors such as Niri.
@@ -176,8 +216,14 @@ buffers.
 The Nix flake checks Rust formatting, Clippy, the package test suite, dependency
 licenses and source policy with cargo-deny, the live harness with ShellCheck,
 and the NixOS module, including its generated immutable TOML and
-graphical-session user unit. CI does not execute live PipeWire tests or the soak
-harness against runner hardware.
+graphical-session user unit. Focused module checks parse the generated TOML to
+verify both domains' defaults, history/hold overrides, omission of the default
+cut-rate key, and preservation of explicit legacy rates. They exercise invalid
+controller ranges, valid boundary values, and authoritative external config
+preservation even when unused generated settings are invalid. These checks
+use a stub package and do not execute the daemon or require a Rust rebuild.
+CI does not execute live PipeWire tests or the soak harness against runner
+hardware.
 
 The current live-suite evidence is recorded in
 [`validation/2026-09-17-live-pipewire-suite.md`](validation/2026-09-17-live-pipewire-suite.md).
@@ -306,7 +352,10 @@ snapshots and the measured suspend wall time. A no-op command qualifies the
 harness assertions only. Routine development and release qualification do not
 require or authorize an actual system suspend.
 
-Native desktop validation on NixOS additionally covered:
+The following native desktop results predate the 30-second P90 dynamics and
+`+6 dB` boost cap. They document historical routing and gain behavior, not
+qualification of the current defaults. Native desktop validation on NixOS
+additionally covered:
 
 - two simultaneous Chromium playback streams with independent `-10.99 LUFS`
   and `-31.14 LUFS` source levels, which settled at `-1.50 dB` and `+17.40 dB`
@@ -367,8 +416,9 @@ roughly 3 dB more headroom while still lifting quiet sources. A near-silent
 Chromium auxiliary stream measured `-56.2 LUFS`, so the playback silence gate
 remains `-50 LUFS` to avoid boosting utility streams.
 
-PipeWire's monitor tap is before sink volume. For a linear sink gain `g`, the
-expected digital level after the sink is:
+PipeWire's monitor tap is before sink volume. For a linear sink gain `g`, a
+steady source that reaches the target without hitting gain or limiter limits
+has the following expected digital level after the sink:
 
 ```text
 effective_lufs = target_lufs + 20 * log10(g)

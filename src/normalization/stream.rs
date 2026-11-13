@@ -152,7 +152,7 @@ mod tests {
         assert_eq!(update.meter.sequence, 1);
         assert_eq!(update.meter.source_loudness_lufs, -23.0);
         assert_eq!(update.meter.output_loudness_lufs, Some(-13.0));
-        assert_eq!(endpoint.target_gain_db.get(), 1.0);
+        assert!((endpoint.target_gain_db.get() - 0.2).abs() < 0.0001);
         assert_eq!(control.domain(), SignalDomain::Playback);
         assert_eq!(control.application_id(), "player");
         assert_eq!(control.stream_id(), "stream-1");
@@ -161,13 +161,10 @@ mod tests {
             control.update(&endpoint, &mut controllers, 1.0).unwrap(),
             None
         );
-        assert_eq!(
-            controllers
-                .stream(SignalDomain::Playback, "stream-1")
-                .unwrap()
-                .gain_db,
-            1.0
-        );
+        let state = controllers
+            .stream(SignalDomain::Playback, "stream-1")
+            .unwrap();
+        assert!((state.gain_db - 0.2).abs() < 0.0001);
     }
 
     #[test]

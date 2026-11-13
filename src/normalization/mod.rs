@@ -2,6 +2,7 @@
 
 pub mod control;
 pub mod dsp;
+mod history;
 pub mod stream;
 
 // Preserve the pre-0.1.1 module name while the canonical path becomes

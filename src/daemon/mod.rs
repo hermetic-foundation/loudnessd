@@ -36,6 +36,7 @@ use crate::{
 };
 
 mod command;
+mod control_clock;
 mod discovery;
 mod process_metrics;
 mod recovery;
@@ -78,6 +79,7 @@ struct Daemon {
     config_path: PathBuf,
     runtime_config: RuntimeConfig,
     enabled: bool,
+    control_clock: control_clock::ControlClock,
 }
 
 impl Daemon {
@@ -500,6 +502,9 @@ impl Daemon {
     }
 
     fn update_controls(&mut self) {
+        let Some(elapsed) = self.control_clock.take_elapsed(Instant::now()) else {
+            return;
+        };
         for managed in self.managed.values_mut() {
             let ManagedStream::Active {
                 filter, control, ..
@@ -507,11 +512,8 @@ impl Daemon {
             else {
                 continue;
             };
-            if let Err(error) = control.update(
-                filter,
-                &mut self.controllers,
-                CONTROL_INTERVAL.as_secs_f32(),
-            ) {
+            if let Err(error) = control.update(filter, &mut self.controllers, elapsed.as_secs_f32())
+            {
                 eprintln!("loudnessd: controller update failed: {error}");
             }
         }
@@ -654,6 +656,7 @@ pub fn run(
         config_path,
         runtime_config: RuntimeConfig::new(baseline),
         enabled: true,
+        control_clock: control_clock::ControlClock::new(Instant::now(), CONTROL_INTERVAL),
     };
 
     daemon.recover_prior_routes();

@@ -44,10 +44,18 @@ pub struct StreamStatus {
     pub control: ControlStatus,
     pub target_lufs: f32,
     pub source_lufs: Option<f32>,
+    #[serde(default)]
+    pub source_momentary_lufs: Option<f32>,
+    #[serde(default)]
+    pub reference_lufs: Option<f32>,
     pub source_peak_dbtp: Option<f32>,
     pub output_lufs: Option<f32>,
     pub output_peak_dbtp: Option<f32>,
     pub gain_db: f32,
+    #[serde(default)]
+    pub requested_gain_db: f32,
+    #[serde(default)]
+    pub fast_cut_hold_seconds: f32,
     pub gain_clamped: bool,
     pub limiter_db: f32,
     pub limiter_max_db: f32,
@@ -105,7 +113,7 @@ impl DaemonStatus {
         }
         for stream in &self.streams {
             output.push_str(&format!(
-                "stream={} filter={} filter_state={} filter_error={} domain={} application={} sequence={} state={} route={} control={} target_lufs={:.2} source_lufs={} source_peak_dbtp={} output_lufs={} output_peak_dbtp={} gain_db={:.2} gain_clamped={} limiter_db={:.2} limiter_max_db={:.2}\n",
+                "stream={} filter={} filter_state={} filter_error={} domain={} application={} sequence={} state={} route={} control={} target_lufs={:.2} source_lufs={} source_peak_dbtp={} output_lufs={} output_peak_dbtp={} gain_db={:.2} gain_clamped={} limiter_db={:.2} limiter_max_db={:.2} source_momentary_lufs={} reference_lufs={} requested_gain_db={:.2} fast_cut_hold_seconds={:.3}\n",
                 stream.node_id,
                 stream
                     .filter_node_id
@@ -131,6 +139,10 @@ impl DaemonStatus {
                 stream.gain_clamped,
                 stream.limiter_db,
                 stream.limiter_max_db,
+                format_metric(stream.source_momentary_lufs),
+                format_metric(stream.reference_lufs),
+                stream.requested_gain_db,
+                stream.fast_cut_hold_seconds,
             ));
         }
         for stream in &self.skipped_streams {
@@ -213,10 +225,14 @@ mod tests {
                 control: ControlStatus::Settled,
                 target_lufs: -13.0,
                 source_lufs: Some(-20.0),
+                source_momentary_lufs: Some(-22.0),
+                reference_lufs: Some(-20.0),
                 source_peak_dbtp: Some(-4.0),
                 output_lufs: Some(-13.1),
                 output_peak_dbtp: Some(-1.2),
                 gain_db: 7.0,
+                requested_gain_db: 7.0,
+                fast_cut_hold_seconds: 0.5,
                 gain_clamped: false,
                 limiter_db: 0.2,
                 limiter_max_db: 1.5,
@@ -252,7 +268,26 @@ mod tests {
         let output_lufs = json["streams"][0]["output_lufs"].as_f64().unwrap();
         assert!((output_lufs - -13.1).abs() < 0.0001);
         assert_eq!(json["streams"][0]["limiter_max_db"], 1.5);
+        assert_eq!(json["streams"][0]["reference_lufs"], -20.0);
+        assert_eq!(json["streams"][0]["source_momentary_lufs"], -22.0);
+        assert_eq!(json["streams"][0]["requested_gain_db"], 7.0);
+        assert_eq!(json["streams"][0]["fast_cut_hold_seconds"], 0.5);
         assert_eq!(json["skipped"], 1);
         assert_eq!(json["skipped_streams"][0]["reason"], "disabled by policy");
+
+        let mut legacy = json;
+        let stream = legacy["streams"][0].as_object_mut().unwrap();
+        for field in [
+            "source_momentary_lufs",
+            "reference_lufs",
+            "requested_gain_db",
+            "fast_cut_hold_seconds",
+        ] {
+            stream.remove(field);
+        }
+        let decoded: DaemonStatus = serde_json::from_value(legacy).unwrap();
+        assert_eq!(decoded.streams[0].reference_lufs, None);
+        assert_eq!(decoded.streams[0].source_momentary_lufs, None);
+        assert_eq!(decoded.streams[0].fast_cut_hold_seconds, 0.0);
     }
 }

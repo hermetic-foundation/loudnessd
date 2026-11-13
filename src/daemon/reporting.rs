@@ -86,14 +86,12 @@ fn stream_status(
     let update = control.last_update();
     let meter = update.map(|update| update.meter);
     let controller_config = controllers.config(control.domain());
-    let gain_db = update
+    let requested_gain_db = update
         .map(|update| update.decision.target_gain_db())
         .unwrap_or(0.0);
-    let gain_clamped = gain_is_limited(
-        controller_config,
-        gain_db,
-        meter.map(|meter| meter.source_loudness_lufs),
-    );
+    let gain_db = meter.map_or(0.0, |meter| meter.applied_gain_db);
+    let reference_lufs = controllers.reference_lufs(control.domain(), control.stream_id());
+    let gain_clamped = gain_is_limited(controller_config, gain_db, reference_lufs);
 
     StreamStatus {
         node_id,
@@ -109,7 +107,7 @@ fn stream_status(
             .map(|update| {
                 control_status(
                     update.decision,
-                    update.meter.output_loudness_lufs,
+                    reference_lufs.map(|lufs| lufs + gain_db),
                     controller_config,
                     gain_clamped,
                 )
@@ -117,10 +115,14 @@ fn stream_status(
             .unwrap_or(ControlStatus::Waiting),
         target_lufs: controller_config.target_lufs,
         source_lufs: meter.map(|meter| meter.source_loudness_lufs),
+        source_momentary_lufs: meter.and_then(|meter| meter.source_momentary_lufs),
+        reference_lufs,
         source_peak_dbtp: meter.and_then(|meter| meter.source_true_peak_dbtp),
         output_lufs: meter.and_then(|meter| meter.output_loudness_lufs),
         output_peak_dbtp: meter.and_then(|meter| meter.output_true_peak_dbtp),
         gain_db,
+        requested_gain_db,
+        fast_cut_hold_seconds: meter.map_or(0.0, |meter| meter.fast_cut_hold_seconds),
         gain_clamped,
         limiter_db: meter.map(|meter| meter.limiter_reduction_db).unwrap_or(0.0),
         limiter_max_db: meter
@@ -208,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_post_filter_meter_settling_after_gain_stops() {
+    fn reports_reference_settling_after_gain_stops() {
         let config = ControllerConfig::default();
         let hold = Decision::Hold { gain_db: 4.0 };
 

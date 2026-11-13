@@ -218,7 +218,11 @@ impl SoakAccumulator {
             if stream.control == ControlStatus::Converging {
                 self.report.converging_observations += 1;
             }
-            if eligible && let Some(output_lufs) = stream.output_lufs {
+            let normalized_reference = stream
+                .reference_lufs
+                .map(|lufs| lufs + stream.gain_db)
+                .or(stream.output_lufs);
+            if eligible && let Some(output_lufs) = normalized_reference {
                 self.report.convergence_eligible_observations += 1;
                 if (output_lufs - stream.target_lufs).abs() <= CONVERGENCE_TOLERANCE_LU {
                     self.report.convergence_passing_observations += 1;
@@ -333,10 +337,14 @@ mod tests {
                 control: ControlStatus::Settled,
                 target_lufs: -13.0,
                 source_lufs: Some(-20.0),
+                source_momentary_lufs: None,
+                reference_lufs: None,
                 source_peak_dbtp: Some(-4.0),
                 output_lufs: Some(output_lufs),
                 output_peak_dbtp: Some(-1.0),
                 gain_db: 7.0,
+                requested_gain_db: 7.0,
+                fast_cut_hold_seconds: 0.0,
                 gain_clamped: false,
                 limiter_db: 0.0,
                 limiter_max_db: 0.4,
@@ -391,6 +399,17 @@ mod tests {
         assert_eq!(report.minimum_active_streams, Some(1));
         assert_eq!(report.maximum_active_streams, Some(2));
         assert_eq!(report.active_stream_shortfall_observations, 1);
+    }
+
+    #[test]
+    fn scores_percentile_reference_without_flattening_intentional_quiet_passages() {
+        let mut observation = status(1, -30.0);
+        observation.streams[0].reference_lufs = Some(-20.0);
+        let mut accumulator = SoakAccumulator::default();
+        accumulator.observe(&observation);
+        let report = accumulator.finish(Duration::from_secs(1));
+        assert_eq!(report.convergence_passing_observations, 1);
+        assert_eq!(report.convergence_ratio, Some(1.0));
     }
 
     #[test]

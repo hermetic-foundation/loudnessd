@@ -80,7 +80,7 @@ impl GainStage {
     }
 
     fn linear_gain(&self, frame_index: usize, frame_count: usize, target_gain_db: f32) -> f32 {
-        let gain_db = if frame_count == 1 {
+        let gain_db = if target_gain_db <= self.gain_db || frame_count == 1 {
             target_gain_db
         } else {
             let progress = frame_index as f32 / (frame_count - 1) as f32;
@@ -244,8 +244,8 @@ mod tests {
 
         stage.process_interleaved(&mut samples, 2, -6.0206).unwrap();
 
-        assert!((samples[0] - 1.0).abs() < 0.0001);
-        assert!((samples[1] - 0.5).abs() < 0.0001);
+        assert!((samples[0] - 0.5).abs() < 0.0001);
+        assert!((samples[1] - 0.25).abs() < 0.0001);
         assert!((samples[2] - 0.5).abs() < 0.0001);
         assert!((samples[3] - 0.25).abs() < 0.0001);
         assert_eq!(stage.gain_db(), -6.0206);
@@ -261,6 +261,15 @@ mod tests {
         stage.process_interleaved(&mut second, 1, -6.0206).unwrap();
 
         assert!((first[3] - second[0]).abs() < 0.0001);
+    }
+
+    #[test]
+    fn cuts_positive_gain_immediately_without_a_downward_ramp() {
+        let mut stage = GainStage::default();
+        stage.process_interleaved(&mut [1.0; 2], 1, 6.0206).unwrap();
+        let mut samples = [1.0; 4];
+        stage.process_interleaved(&mut samples, 1, -6.0206).unwrap();
+        assert!(samples.iter().all(|sample| (*sample - 0.5).abs() < 0.0001));
     }
 
     #[test]

@@ -62,15 +62,27 @@ fn zero_gain_preserves_every_sample() {
 }
 
 #[test]
-fn process_callback_applies_a_smooth_target_gain() {
+fn process_callback_applies_reduction_from_the_first_sample() {
     let input = [1.0; 4];
     let mut output = [0.0; 4];
     let mut gain = GainStage::default();
 
     process_samples(&input, &mut output, &mut gain, -6.0206);
 
-    assert!((output[0] - 1.0).abs() < 0.0001);
+    assert!((output[0] - 0.5).abs() < 0.0001);
     assert!((output[3] - 0.5).abs() < 0.0001);
+}
+
+#[test]
+fn process_callback_still_interpolates_upward_gain() {
+    let input = [1.0; 4];
+    let mut output = [0.0; 4];
+    let mut gain = GainStage::default();
+
+    process_samples(&input, &mut output, &mut gain, 6.0206);
+
+    assert!((output[0] - 1.0).abs() < 0.0001);
+    assert!((output[3] - 2.0).abs() < 0.0001);
 }
 
 #[test]

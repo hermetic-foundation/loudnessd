@@ -10,7 +10,9 @@ use ::pipewire::sys;
 use ebur128_stream::Channel;
 
 use super::{MeterSnapshot, PortDirection};
+use crate::normalization::ControllerConfig;
 use crate::normalization::dsp::{
+    fast_cut::{FastCut, FastCutConfig},
     gain::{GainStage, TruePeakLimiter},
     meter::{LoudnessMeter, MeterReading},
 };
@@ -27,6 +29,7 @@ pub(super) struct FilterCallbackData {
     active_processing_state: Option<usize>,
     latest_metrics: PublishedMetrics,
     maximum_limiter_reduction_db: f32,
+    dynamics: Option<FastCut>,
 }
 
 struct ProcessingState {
@@ -65,11 +68,44 @@ impl Default for FilterCallbackData {
             active_processing_state: None,
             latest_metrics: PublishedMetrics::default(),
             maximum_limiter_reduction_db: 0.0,
+            dynamics: None,
         }
     }
 }
 
 impl FilterCallbackData {
+    pub(super) fn configure_dynamics(
+        &mut self,
+        config: ControllerConfig,
+    ) -> Result<(), &'static str> {
+        let config = config.validate()?;
+        self.dynamics = Some(FastCut::new(FastCutConfig {
+            target_lufs: config.target_lufs,
+            silence_gate_lufs: config.silence_gate_lufs,
+            deadband_lu: config.deadband_lu,
+            maximum_boost_db: config.maximum_boost_db,
+            maximum_cut_db: config.maximum_cut_db,
+            boost_rate_db_per_second: config.boost_rate_db_per_second,
+            hold_seconds: config.fast_cut_hold_seconds,
+        })?);
+        Ok(())
+    }
+
+    pub(super) fn restore_dynamics(
+        &mut self,
+        gain_db: f32,
+        remaining_hold_seconds: f32,
+        sequence: u64,
+    ) -> Result<(), &'static str> {
+        let dynamics = self
+            .dynamics
+            .as_mut()
+            .ok_or("dynamics must be configured before restoring gain")?;
+        dynamics.restore(gain_db, remaining_hold_seconds, sequence)?;
+        let restored_gain_db = dynamics.gain_db();
+        self.set_target_gain_db(restored_gain_db)
+    }
+
     pub(super) fn mark_destroyed(&self) {
         self.destroyed.store(true, Ordering::Release);
     }
@@ -325,6 +361,16 @@ pub(super) unsafe extern "C" fn callback(
     };
 
     let sample_rate = process_sample_rate(position, data.default_sample_rate);
+    // SAFETY: Acquired buffers remain valid for this native process cycle.
+    unsafe { process_cycle(data, &buffers, sample_rate, sample_count) };
+}
+
+unsafe fn process_cycle(
+    data: &mut FilterCallbackData,
+    buffers: &CycleBuffers,
+    sample_rate: Option<u32>,
+    sample_count: u32,
+) {
     let processing_state = processing_state_index(&data.processing_states, sample_rate);
     if data.active_processing_state != processing_state {
         if let Some(index) = processing_state {
@@ -336,15 +382,26 @@ pub(super) unsafe extern "C" fn callback(
         meter_ports(
             &mut data.processing_states[index].source,
             &data.ports,
-            &buffers,
+            buffers,
             sample_count,
             PortDirection::Input,
         )
     });
 
-    let target_gain_db = processing_state.map_or(0.0, |_| {
+    let requested_gain_db = processing_state.map_or(0.0, |_| {
         f32::from_bits(data.target_gain_bits.load(Ordering::Relaxed))
     });
+    let target_gain_db = if let (Some(_), Some(rate), Some(dynamics)) =
+        (processing_state, sample_rate, data.dynamics.as_mut())
+    {
+        dynamics.process(
+            requested_gain_db,
+            source_reading.and_then(|reading| reading.momentary_lufs),
+            sample_count as f32 / rate as f32,
+        )
+    } else {
+        requested_gain_db
+    };
     for output_index in 0..data.ports.len() {
         if data.ports[output_index].direction != PortDirection::Output {
             continue;
@@ -379,7 +436,7 @@ pub(super) unsafe extern "C" fn callback(
         limit_output_ports(
             &mut data.processing_states[index].limiter,
             &data.ports,
-            &buffers,
+            buffers,
             sample_count,
         )
     });
@@ -388,7 +445,7 @@ pub(super) unsafe extern "C" fn callback(
         meter_ports(
             &mut data.processing_states[index].output,
             &data.ports,
-            &buffers,
+            buffers,
             sample_count,
             PortDirection::Output,
         )
@@ -400,8 +457,14 @@ pub(super) unsafe extern "C" fn callback(
             limiter_reduction_db,
             maximum_limiter_reduction_db: data.maximum_limiter_reduction_db,
             applied_gain_db: target_gain_db,
-            fast_cut_hold_seconds: 0.0,
-            fast_cut_sequence: 0,
+            fast_cut_hold_seconds: data
+                .dynamics
+                .as_ref()
+                .map_or(0.0, FastCut::remaining_hold_seconds),
+            fast_cut_sequence: data
+                .dynamics
+                .as_ref()
+                .map_or(0, FastCut::reduction_sequence),
         });
     }
 }
@@ -609,5 +672,85 @@ mod tests {
             None
         );
         assert_eq!(processing_state_index(&data.processing_states, None), None);
+    }
+
+    #[test]
+    fn native_processing_path_cuts_loud_audio_and_never_snaps_back_to_a_stale_request() {
+        use std::f32::consts::TAU;
+
+        const FRAMES: usize = 480;
+        let mut data = callback_data_with_stereo_ports();
+        data.enable_meter(48_000).unwrap();
+        data.configure_dynamics(ControllerConfig::default())
+            .unwrap();
+        // Deliberately never update the main controller's stale boost request.
+        data.set_target_gain_db(6.0).unwrap();
+        let mut left = [0.0; FRAMES];
+        let mut right = [0.0; FRAMES];
+        let mut left_out = [0.0; FRAMES];
+        let mut right_out = [0.0; FRAMES];
+        let buffers = CycleBuffers {
+            pointers: {
+                let mut pointers = [std::ptr::null_mut(); MAX_METER_CHANNELS];
+                pointers[..4].copy_from_slice(&[
+                    left.as_mut_ptr(),
+                    left_out.as_mut_ptr(),
+                    right.as_mut_ptr(),
+                    right_out.as_mut_ptr(),
+                ]);
+                pointers
+            },
+            len: 4,
+        };
+        let mut previous_gain = 0.0;
+        let mut first_cut_gain = None;
+        for cycle in 0..300 {
+            let amplitude = if cycle < 100 { 0.5 } else { 0.005 };
+            for frame in 0..FRAMES {
+                let sample =
+                    amplitude * (TAU * 1_000.0 * (cycle * FRAMES + frame) as f32 / 48_000.0).sin();
+                left[frame] = sample;
+                right[frame] = sample;
+            }
+            // SAFETY: All four disjoint arrays remain allocated for this call
+            // and contain exactly FRAMES writable samples.
+            unsafe { process_cycle(&mut data, &buffers, Some(48_000), FRAMES as u32) };
+            assert!(
+                left_out
+                    .iter()
+                    .chain(&right_out)
+                    .all(|sample| sample.is_finite())
+            );
+            assert_eq!(left_out, right_out);
+            if let Some(snapshot) = data.latest_meter_snapshot() {
+                assert!(snapshot.applied_gain_db <= previous_gain + 0.0021);
+                previous_gain = snapshot.applied_gain_db;
+                if snapshot.fast_cut_sequence > 0 {
+                    let cut = *first_cut_gain.get_or_insert(snapshot.applied_gain_db);
+                    assert!(snapshot.applied_gain_db <= cut + 0.2 * 3.0 + 0.001);
+                    assert!(snapshot.source_momentary_lufs.is_some());
+                }
+            }
+        }
+        assert!(first_cut_gain.is_some_and(|gain| gain < -6.0));
+        let final_snapshot = data.latest_meter_snapshot().unwrap();
+        assert!(final_snapshot.applied_gain_db < -6.0);
+        assert_eq!(final_snapshot.fast_cut_hold_seconds, 0.0);
+        assert!(data.dynamics.as_ref().unwrap().reduction_sequence() > 0);
+    }
+
+    #[test]
+    fn replacement_filter_starts_with_its_inherited_attenuation_before_any_meter_reading() {
+        let mut data = callback_data_with_stereo_ports();
+        data.enable_meter(48_000).unwrap();
+        data.configure_dynamics(ControllerConfig::default())
+            .unwrap();
+        data.restore_dynamics(-12.0, 0.5, 42).unwrap();
+        assert_eq!(data.target_gain_db(), -12.0);
+        assert_eq!(data.latest_meter_snapshot(), None);
+        let requested_gain_db = data.target_gain_db();
+        let dynamics = data.dynamics.as_mut().unwrap();
+        assert_eq!(dynamics.process(requested_gain_db, None, 0.01), -12.0);
+        assert_eq!(dynamics.reduction_sequence(), 42);
     }
 }

@@ -13,6 +13,7 @@ use ::pipewire::{core::CoreRc, loop_::Loop, properties::properties, sys};
 
 mod process;
 
+use crate::normalization::ControllerConfig;
 use process::FilterCallbackData;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -312,6 +313,20 @@ impl UnconnectedFilter {
 
     pub fn enable_meter(&mut self, sample_rate: u32) -> Result<(), ebur128_stream::Error> {
         self.callback_data.enable_meter(sample_rate)
+    }
+
+    pub fn configure_dynamics(&mut self, config: ControllerConfig) -> Result<(), &'static str> {
+        self.callback_data.configure_dynamics(config)
+    }
+
+    pub fn restore_dynamics(
+        &mut self,
+        gain_db: f32,
+        remaining_hold_seconds: f32,
+        sequence: u64,
+    ) -> Result<(), &'static str> {
+        self.callback_data
+            .restore_dynamics(gain_db, remaining_hold_seconds, sequence)
     }
 
     pub fn node_id(&self) -> Option<u32> {

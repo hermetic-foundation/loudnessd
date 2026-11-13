@@ -11,15 +11,20 @@ let
   cfg = config.services.loudnessd;
   system = pkgs.stdenv.hostPlatform.system;
   toml = pkgs.formats.toml { };
-  controllerSettings = settings: {
-    target_lufs = settings.targetLufs;
-    silence_gate_lufs = settings.silenceGateLufs;
-    deadband_lu = settings.deadbandLu;
-    maximum_boost_db = settings.maximumBoostDb;
-    maximum_cut_db = settings.maximumCutDb;
-    boost_rate_db_per_second = settings.boostRateDbPerSecond;
-    cut_rate_db_per_second = settings.cutRateDbPerSecond;
-  };
+  controllerSettings =
+    settings:
+    lib.filterAttrs (_: value: value != null) {
+      target_lufs = settings.targetLufs;
+      silence_gate_lufs = settings.silenceGateLufs;
+      deadband_lu = settings.deadbandLu;
+      maximum_boost_db = settings.maximumBoostDb;
+      maximum_cut_db = settings.maximumCutDb;
+      boost_rate_db_per_second = settings.boostRateDbPerSecond;
+      cut_rate_db_per_second = settings.cutRateDbPerSecond;
+      history_window_seconds = settings.historyWindowSeconds;
+      history_percentile = settings.historyPercentile;
+      fast_cut_hold_seconds = settings.fastCutHoldSeconds;
+    };
   controllerOptions = defaults: {
     targetLufs = lib.mkOption {
       type = lib.types.float;
@@ -30,7 +35,7 @@ let
     silenceGateLufs = lib.mkOption {
       type = lib.types.float;
       default = defaults.silenceGateLufs;
-      description = "Signals below this loudness remain at unity gain.";
+      description = "Signals below this loudness are not boosted.";
     };
 
     deadbandLu = lib.mkOption {
@@ -58,9 +63,31 @@ let
     };
 
     cutRateDbPerSecond = lib.mkOption {
-      type = lib.types.float;
+      type = lib.types.nullOr lib.types.float;
       default = defaults.cutRateDbPerSecond;
-      description = "Maximum downward gain slew rate.";
+      description = ''
+        Optional legacy downward gain slew rate for the main controller. Null
+        omits the TOML key and makes cuts immediate. An explicit positive rate
+        does not slow the audio-path fast cut, which is always immediate.
+      '';
+    };
+
+    historyWindowSeconds = lib.mkOption {
+      type = lib.types.float;
+      default = defaults.historyWindowSeconds;
+      description = "Per-stream history duration in seconds, greater than zero and at most 300.";
+    };
+
+    historyPercentile = lib.mkOption {
+      type = lib.types.float;
+      default = defaults.historyPercentile;
+      description = "Rank percentile of the momentary 400 ms loudness history, in (0, 100].";
+    };
+
+    fastCutHoldSeconds = lib.mkOption {
+      type = lib.types.float;
+      default = defaults.fastCutHoldSeconds;
+      description = "Non-negative hold after an audio-path fast cut before upward gain recovery.";
     };
   };
   controllerAssertions = direction: settings: [
@@ -85,8 +112,20 @@ let
       message = "services.loudnessd.settings.${direction}.boostRateDbPerSecond must be positive";
     }
     {
-      assertion = settings.cutRateDbPerSecond > 0.0;
-      message = "services.loudnessd.settings.${direction}.cutRateDbPerSecond must be positive";
+      assertion = settings.cutRateDbPerSecond == null || settings.cutRateDbPerSecond > 0.0;
+      message = "services.loudnessd.settings.${direction}.cutRateDbPerSecond must be null or positive";
+    }
+    {
+      assertion = settings.historyWindowSeconds > 0.0 && settings.historyWindowSeconds <= 300.0;
+      message = "services.loudnessd.settings.${direction}.historyWindowSeconds must be in (0, 300]";
+    }
+    {
+      assertion = settings.historyPercentile > 0.0 && settings.historyPercentile <= 100.0;
+      message = "services.loudnessd.settings.${direction}.historyPercentile must be in (0, 100]";
+    }
+    {
+      assertion = settings.fastCutHoldSeconds >= 0.0;
+      message = "services.loudnessd.settings.${direction}.fastCutHoldSeconds must be non-negative";
     }
   ];
   applicationSettings = lib.mapAttrs (
@@ -159,20 +198,26 @@ in
         targetLufs = -16.0;
         silenceGateLufs = -50.0;
         deadbandLu = 0.75;
-        maximumBoostDb = 18.0;
+        maximumBoostDb = 6.0;
         maximumCutDb = 24.0;
-        boostRateDbPerSecond = 1.0;
-        cutRateDbPerSecond = 3.0;
+        boostRateDbPerSecond = 0.2;
+        cutRateDbPerSecond = null;
+        historyWindowSeconds = 30.0;
+        historyPercentile = 90.0;
+        fastCutHoldSeconds = 1.0;
       };
 
       capture = controllerOptions {
         targetLufs = -18.0;
         silenceGateLufs = -55.0;
         deadbandLu = 1.0;
-        maximumBoostDb = 12.0;
+        maximumBoostDb = 6.0;
         maximumCutDb = 18.0;
-        boostRateDbPerSecond = 0.5;
-        cutRateDbPerSecond = 3.0;
+        boostRateDbPerSecond = 0.2;
+        cutRateDbPerSecond = null;
+        historyWindowSeconds = 30.0;
+        historyPercentile = 90.0;
+        fastCutHoldSeconds = 1.0;
       };
 
       applications = lib.mkOption {

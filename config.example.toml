@@ -1,21 +1,27 @@
 # Directional defaults apply to applications without an explicit entry.
+# Omitting cut_rate_db_per_second makes cuts immediate. A positive legacy rate
+# affects only the main controller; the audio-path fast cut is always immediate.
 [playback]
 target_lufs = -16.0
 silence_gate_lufs = -50.0
 deadband_lu = 0.75
-maximum_boost_db = 18.0
+maximum_boost_db = 6.0
 maximum_cut_db = 24.0
-boost_rate_db_per_second = 1.0
-cut_rate_db_per_second = 3.0
+boost_rate_db_per_second = 0.2
+history_window_seconds = 30.0
+history_percentile = 90.0
+fast_cut_hold_seconds = 1.0
 
 [capture]
 target_lufs = -18.0
 silence_gate_lufs = -55.0
 deadband_lu = 1.0
-maximum_boost_db = 12.0
+maximum_boost_db = 6.0
 maximum_cut_db = 18.0
-boost_rate_db_per_second = 0.5
-cut_rate_db_per_second = 3.0
+boost_rate_db_per_second = 0.2
+history_window_seconds = 30.0
+history_percentile = 90.0
+fast_cut_hold_seconds = 1.0
 
 [defaults]
 playback = true

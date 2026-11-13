@@ -44,44 +44,81 @@
           };
           # Configuration checks do not execute the daemon or need a Rust rebuild.
           moduleTestPackage = pkgs.writeShellScriptBin "loudnessd" "exit 1";
-          moduleConfiguration = nixpkgs.lib.nixosSystem {
-            inherit system;
-            modules = [
-              self.nixosModules.default
-              {
-                services.loudnessd = {
-                  enable = true;
-                  package = moduleTestPackage;
-                  settings.playback.targetLufs = -17.0;
-                  settings.applications.browser.capture = false;
-                };
-              }
-            ];
+          controllerModuleConfiguration =
+            settings:
+            nixpkgs.lib.nixosSystem {
+              inherit system;
+              modules = [
+                self.nixosModules.default
+                {
+                  services.loudnessd = {
+                    enable = true;
+                    package = moduleTestPackage;
+                    inherit settings;
+                  };
+                }
+              ];
+            };
+          defaultModuleConfiguration = controllerModuleConfiguration { };
+          defaultService = defaultModuleConfiguration.config.systemd.user.services.loudnessd;
+          moduleConfiguration = controllerModuleConfiguration {
+            playback = {
+              targetLufs = -17.0;
+              historyWindowSeconds = 300.0;
+              historyPercentile = 100.0;
+              fastCutHoldSeconds = 0.0;
+              cutRateDbPerSecond = 2.5;
+            };
+            capture = {
+              historyWindowSeconds = 1.0;
+              historyPercentile = 1.0;
+              fastCutHoldSeconds = 2.0;
+              cutRateDbPerSecond = 1.5;
+            };
+            applications.browser.capture = false;
           };
           service = moduleConfiguration.config.systemd.user.services.loudnessd;
-          invalidModuleConfiguration = nixpkgs.lib.nixosSystem {
-            inherit system;
-            modules = [
-              self.nixosModules.default
-              {
-                services.loudnessd = {
-                  enable = true;
-                  settings.playback = {
-                    targetLufs = -16.0;
-                    silenceGateLufs = -12.0;
-                  };
-                };
-              }
-            ];
+          invalidControllerSettings = {
+            silenceGateLufs = -12.0;
+            deadbandLu = -1.0;
+            maximumBoostDb = -1.0;
+            maximumCutDb = -1.0;
+            boostRateDbPerSecond = 0.0;
+            cutRateDbPerSecond = 0.0;
+            historyWindowSeconds = 0.0;
+            historyPercentile = 0.0;
+            fastCutHoldSeconds = -1.0;
           };
-          invalidControllerAssertion = nixpkgs.lib.findFirst (
-            entry:
-            entry.message == "services.loudnessd.settings.playback.silenceGateLufs must be below targetLufs"
-          ) null invalidModuleConfiguration.config.assertions;
+          invalidModuleConfiguration = controllerModuleConfiguration {
+            playback = invalidControllerSettings;
+            capture = invalidControllerSettings;
+          };
+          outOfRangeControllerSettings = {
+            historyWindowSeconds = 301.0;
+            historyPercentile = 100.1;
+            cutRateDbPerSecond = -1.0;
+          };
+          outOfRangeModuleConfiguration = controllerModuleConfiguration {
+            playback = outOfRangeControllerSettings;
+            capture = outOfRangeControllerSettings;
+          };
+          controllerAssertions =
+            configuration:
+            nixpkgs.lib.filter (
+              # Successful NixOS assertions can have deliberately lazy messages.
+              entry: !entry.assertion && nixpkgs.lib.hasPrefix "services.loudnessd.settings." entry.message
+            ) configuration.config.assertions;
           externalConfig = pkgs.writeText "loudnessd-external.toml" ''
+            # Preserve externally managed values and comments verbatim.
             [defaults]
             playback = false
             capture = true
+
+            [playback]
+            history_window_seconds = 12.0
+            history_percentile = 75.0
+            fast_cut_hold_seconds = 0.5
+            cut_rate_db_per_second = 4.0
           '';
           externalModuleConfiguration = nixpkgs.lib.nixosSystem {
             inherit system;
@@ -92,6 +129,8 @@
                   enable = true;
                   package = moduleTestPackage;
                   configFile = externalConfig;
+                  settings.playback = invalidControllerSettings;
+                  settings.capture = invalidControllerSettings;
                 };
               }
             ];
@@ -220,27 +259,81 @@
           module =
             assert builtins.elem "graphical-session.target" service.wantedBy;
             assert builtins.elem "pipewire.service" service.partOf;
-            assert invalidControllerAssertion != null;
-            assert !invalidControllerAssertion.assertion;
+            assert controllerAssertions defaultModuleConfiguration == [ ];
+            assert controllerAssertions moduleConfiguration == [ ];
+            assert builtins.length (controllerAssertions invalidModuleConfiguration) == 18;
+            assert nixpkgs.lib.all (entry: !entry.assertion) (controllerAssertions invalidModuleConfiguration);
+            assert
+              nixpkgs.lib.count (entry: !entry.assertion) (controllerAssertions outOfRangeModuleConfiguration)
+              == 6;
+            assert controllerAssertions externalModuleConfiguration == [ ];
             pkgs.runCommand "loudnessd-module-check"
               {
+                nativeBuildInputs = [ pkgs.python3 ];
+                defaultExecStart = defaultService.serviceConfig.ExecStart;
                 execStart = service.serviceConfig.ExecStart;
                 externalExecStart = externalService.serviceConfig.ExecStart;
+                externalConfigPath = externalConfig;
+                exampleConfig = ./config.example.toml;
               }
               ''
-                generatedConfig="''${execStart##*--config }"
-                grep -Fq '[defaults]' "$generatedConfig"
-                grep -Fq 'playback = true' "$generatedConfig"
-                grep -Fq 'capture = false' "$generatedConfig"
-                grep -Fq '[playback]' "$generatedConfig"
-                grep -Fq 'target_lufs = -17.0' "$generatedConfig"
-                grep -Fq 'maximum_boost_db = 18.0' "$generatedConfig"
-                grep -Fq '[capture]' "$generatedConfig"
-                grep -Fq 'target_lufs = -18.0' "$generatedConfig"
-                externalConfig="''${externalExecStart##*--config }"
-                grep -Fq 'playback = false' "$externalConfig"
-                grep -Fq 'capture = true' "$externalConfig"
-                touch $out
+                python3 - <<'PY'
+                import os
+                from pathlib import Path
+                import shlex
+                import tomllib
+
+                def service_config(name):
+                    command = shlex.split(os.environ[name])
+                    assert len(command) == 4, command
+                    assert command[1:3] == ["--daemon", "--config"], command
+                    return Path(command[3])
+
+                defaults = tomllib.loads(service_config("defaultExecStart").read_text())
+                assert defaults["defaults"] == {"playback": True, "capture": True}
+                assert defaults.get("applications", {}) == {}
+                common = {
+                    "maximum_boost_db": 6.0,
+                    "boost_rate_db_per_second": 0.2,
+                    "history_window_seconds": 30.0,
+                    "history_percentile": 90.0,
+                    "fast_cut_hold_seconds": 1.0,
+                }
+                expected = {
+                    "playback": dict(common, target_lufs=-16.0, silence_gate_lufs=-50.0,
+                                     deadband_lu=0.75, maximum_cut_db=24.0),
+                    "capture": dict(common, target_lufs=-18.0, silence_gate_lufs=-55.0,
+                                    deadband_lu=1.0, maximum_cut_db=18.0),
+                }
+                example = tomllib.loads(Path(os.environ["exampleConfig"]).read_text())
+                for direction, settings in expected.items():
+                    assert defaults[direction] == settings, defaults[direction]
+                    assert "cut_rate_db_per_second" not in defaults[direction]
+                    assert example[direction] == settings, example[direction]
+
+                configured = tomllib.loads(service_config("execStart").read_text())
+                assert configured["defaults"] == defaults["defaults"]
+                assert configured["applications"] == {"browser": {"capture": False}}
+                assert configured["playback"] == dict(
+                    expected["playback"], target_lufs=-17.0, history_window_seconds=300.0,
+                    history_percentile=100.0, fast_cut_hold_seconds=0.0,
+                    cut_rate_db_per_second=2.5)
+                assert configured["capture"] == dict(
+                    expected["capture"], history_window_seconds=1.0,
+                    history_percentile=1.0, fast_cut_hold_seconds=2.0,
+                    cut_rate_db_per_second=1.5)
+
+                external_path = service_config("externalExecStart")
+                assert external_path == Path(os.environ["externalConfigPath"])
+                external_text = external_path.read_text()
+                assert external_text.startswith("# Preserve externally managed values and comments verbatim.\n")
+                assert tomllib.loads(external_text) == {
+                    "defaults": {"playback": False, "capture": True},
+                    "playback": {"history_window_seconds": 12.0, "history_percentile": 75.0,
+                                 "fast_cut_hold_seconds": 0.5, "cut_rate_db_per_second": 4.0},
+                }
+                PY
+                touch "$out"
               '';
         }
       );

@@ -186,11 +186,15 @@ impl CycleBuffers {
 pub(super) struct PublishedMetrics {
     version: AtomicU64,
     source_loudness_bits: AtomicU32,
+    source_momentary_bits: AtomicU32,
     source_true_peak_bits: AtomicU32,
     output_loudness_bits: AtomicU32,
     output_true_peak_bits: AtomicU32,
     limiter_reduction_bits: AtomicU32,
     maximum_limiter_reduction_bits: AtomicU32,
+    applied_gain_bits: AtomicU32,
+    fast_cut_hold_bits: AtomicU32,
+    fast_cut_sequence: AtomicU64,
 }
 
 impl PublishedMetrics {
@@ -199,6 +203,10 @@ impl PublishedMetrics {
         debug_assert_eq!(version % 2, 0, "the process callback is a single writer");
         self.source_loudness_bits
             .store(metrics.source.loudness_lufs.to_bits(), Ordering::Relaxed);
+        self.source_momentary_bits.store(
+            option_f32_bits(metrics.source.momentary_lufs),
+            Ordering::Relaxed,
+        );
         self.source_true_peak_bits.store(
             option_f32_bits(metrics.source.true_peak_dbtp),
             Ordering::Relaxed,
@@ -217,6 +225,12 @@ impl PublishedMetrics {
             metrics.maximum_limiter_reduction_db.to_bits(),
             Ordering::Relaxed,
         );
+        self.applied_gain_bits
+            .store(metrics.applied_gain_db.to_bits(), Ordering::Relaxed);
+        self.fast_cut_hold_bits
+            .store(metrics.fast_cut_hold_seconds.to_bits(), Ordering::Relaxed);
+        self.fast_cut_sequence
+            .store(metrics.fast_cut_sequence, Ordering::Relaxed);
         self.version.store(version + 2, Ordering::Release);
     }
 
@@ -232,6 +246,8 @@ impl PublishedMetrics {
             }
             let source_loudness_lufs =
                 f32::from_bits(self.source_loudness_bits.load(Ordering::Relaxed));
+            let source_momentary_lufs =
+                option_f32_from_bits(self.source_momentary_bits.load(Ordering::Relaxed));
             let source_true_peak_dbtp =
                 option_f32_from_bits(self.source_true_peak_bits.load(Ordering::Relaxed));
             let output_loudness_lufs =
@@ -242,16 +258,24 @@ impl PublishedMetrics {
                 f32::from_bits(self.limiter_reduction_bits.load(Ordering::Relaxed));
             let maximum_limiter_reduction_db =
                 f32::from_bits(self.maximum_limiter_reduction_bits.load(Ordering::Relaxed));
+            let applied_gain_db = f32::from_bits(self.applied_gain_bits.load(Ordering::Relaxed));
+            let fast_cut_hold_seconds =
+                f32::from_bits(self.fast_cut_hold_bits.load(Ordering::Relaxed));
+            let fast_cut_sequence = self.fast_cut_sequence.load(Ordering::Relaxed);
             let after = self.version.load(Ordering::Acquire);
             if before == after {
                 return Some(MeterSnapshot {
                     sequence: before / 2,
                     source_loudness_lufs,
+                    source_momentary_lufs,
                     source_true_peak_dbtp,
                     output_loudness_lufs,
                     output_true_peak_dbtp,
                     limiter_reduction_db,
                     maximum_limiter_reduction_db,
+                    applied_gain_db,
+                    fast_cut_hold_seconds,
+                    fast_cut_sequence,
                 });
             }
         }
@@ -264,6 +288,9 @@ pub(super) struct ProcessMetrics {
     pub(super) output: Option<MeterReading>,
     pub(super) limiter_reduction_db: f32,
     pub(super) maximum_limiter_reduction_db: f32,
+    pub(super) applied_gain_db: f32,
+    pub(super) fast_cut_hold_seconds: f32,
+    pub(super) fast_cut_sequence: u64,
 }
 
 fn option_f32_bits(value: Option<f32>) -> u32 {
@@ -372,6 +399,9 @@ pub(super) unsafe extern "C" fn callback(
             output: output_reading,
             limiter_reduction_db,
             maximum_limiter_reduction_db: data.maximum_limiter_reduction_db,
+            applied_gain_db: target_gain_db,
+            fast_cut_hold_seconds: 0.0,
+            fast_cut_sequence: 0,
         });
     }
 }

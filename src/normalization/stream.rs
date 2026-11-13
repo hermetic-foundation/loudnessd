@@ -125,11 +125,15 @@ mod tests {
         MeterSnapshot {
             sequence,
             source_loudness_lufs,
+            source_momentary_lufs: Some(source_loudness_lufs),
             source_true_peak_dbtp: Some(-3.0),
             output_loudness_lufs: Some(-13.0),
             output_true_peak_dbtp: Some(-1.0),
             limiter_reduction_db: 0.0,
             maximum_limiter_reduction_db: 0.0,
+            applied_gain_db: 0.0,
+            fast_cut_hold_seconds: 0.0,
+            fast_cut_sequence: 0,
         }
     }
 

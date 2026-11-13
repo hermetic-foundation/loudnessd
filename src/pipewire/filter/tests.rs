@@ -181,50 +181,67 @@ fn meter_snapshots_are_sequenced() {
     published.publish(ProcessMetrics {
         source: MeterReading {
             loudness_lufs: -18.5,
+            momentary_lufs: Some(-17.5),
             true_peak_dbtp: Some(-4.0),
             using_short_term: true,
         },
         output: Some(MeterReading {
             loudness_lufs: -13.2,
+            momentary_lufs: Some(-12.2),
             true_peak_dbtp: Some(-1.1),
             using_short_term: true,
         }),
         limiter_reduction_db: 0.5,
         maximum_limiter_reduction_db: 1.0,
+        applied_gain_db: -2.0,
+        fast_cut_hold_seconds: 0.5,
+        fast_cut_sequence: 1,
     });
     assert_eq!(
         published.read(),
         Some(MeterSnapshot {
             sequence: 1,
             source_loudness_lufs: -18.5,
+            source_momentary_lufs: Some(-17.5),
             source_true_peak_dbtp: Some(-4.0),
             output_loudness_lufs: Some(-13.2),
             output_true_peak_dbtp: Some(-1.1),
             limiter_reduction_db: 0.5,
             maximum_limiter_reduction_db: 1.0,
+            applied_gain_db: -2.0,
+            fast_cut_hold_seconds: 0.5,
+            fast_cut_sequence: 1,
         })
     );
 
     published.publish(ProcessMetrics {
         source: MeterReading {
             loudness_lufs: -13.0,
+            momentary_lufs: Some(-13.0),
             true_peak_dbtp: None,
             using_short_term: false,
         },
         output: None,
         limiter_reduction_db: 0.0,
         maximum_limiter_reduction_db: 1.0,
+        applied_gain_db: -2.0,
+        fast_cut_hold_seconds: 0.0,
+        fast_cut_sequence: 1,
     });
     assert_eq!(
         published.read(),
         Some(MeterSnapshot {
             sequence: 2,
             source_loudness_lufs: -13.0,
+            source_momentary_lufs: Some(-13.0),
             source_true_peak_dbtp: None,
             output_loudness_lufs: None,
             output_true_peak_dbtp: None,
             limiter_reduction_db: 0.0,
             maximum_limiter_reduction_db: 1.0,
+            applied_gain_db: -2.0,
+            fast_cut_hold_seconds: 0.0,
+            fast_cut_sequence: 1,
         })
     );
 }

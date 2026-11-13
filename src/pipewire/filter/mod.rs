@@ -48,11 +48,15 @@ pub struct PortDescriptor {
 pub struct MeterSnapshot {
     pub sequence: u64,
     pub source_loudness_lufs: f32,
+    pub source_momentary_lufs: Option<f32>,
     pub source_true_peak_dbtp: Option<f32>,
     pub output_loudness_lufs: Option<f32>,
     pub output_true_peak_dbtp: Option<f32>,
     pub limiter_reduction_db: f32,
     pub maximum_limiter_reduction_db: f32,
+    pub applied_gain_db: f32,
+    pub fast_cut_hold_seconds: f32,
+    pub fast_cut_sequence: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

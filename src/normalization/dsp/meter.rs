@@ -5,6 +5,7 @@ use ebur128_stream::{Analyzer, AnalyzerBuilder, Channel, Error, Mode};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeterReading {
     pub loudness_lufs: f32,
+    pub momentary_lufs: Option<f32>,
     pub true_peak_dbtp: Option<f32>,
     pub using_short_term: bool,
 }
@@ -40,10 +41,12 @@ impl LoudnessMeter {
 
     fn reading(&mut self) -> Option<MeterReading> {
         let snapshot = self.analyzer.snapshot();
+        let momentary = snapshot.momentary_lufs();
         let short_term = snapshot.short_term_lufs();
-        let loudness = short_term.or_else(|| snapshot.momentary_lufs());
+        let loudness = short_term.or(momentary);
         loudness.map(|loudness_lufs| MeterReading {
             loudness_lufs: loudness_lufs as f32,
+            momentary_lufs: momentary.map(|lufs| lufs as f32),
             true_peak_dbtp: snapshot.true_peak_dbtp().map(|peak| peak as f32),
             using_short_term: short_term.is_some(),
         })
@@ -118,5 +121,17 @@ mod tests {
         meter.reset();
 
         assert_eq!(meter.push_interleaved(&[0.0; 128]).unwrap(), None);
+    }
+
+    #[test]
+    fn momentary_measurement_reacts_before_the_short_term_average() {
+        let mut meter = LoudnessMeter::new(48_000, &[Channel::Left, Channel::Right]).unwrap();
+        meter
+            .push_interleaved(&stereo_sine(48_000, 4, 0.01))
+            .unwrap();
+        let loud = stereo_sine(48_000, 1, 0.1);
+        let reading = meter.push_interleaved(&loud[..48_000]).unwrap().unwrap();
+        assert!(reading.using_short_term);
+        assert!(reading.momentary_lufs.unwrap() > reading.loudness_lufs + 5.0);
     }
 }

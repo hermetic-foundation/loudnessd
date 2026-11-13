@@ -9,6 +9,59 @@ limiter prevents normalization gain from clipping without replacing
 perceived-loudness control. Its fixed 10 ms lookahead is the processing latency
 added by each managed stream.
 
+## Loudness dynamics
+
+Each stream keeps its own 30-second history of momentary 400 ms source-loudness
+blocks. The controller runs every 100 ms and uses the history's 90th percentile
+(P90) to set its absolute gain target. P90 is a rank threshold: roughly 90% of
+the observations are at or below it. It is neither the maximum nor the mean of
+the loudest 10%. An isolated spike need not immediately change a populated
+30-second P90 history.
+
+A separate audio-path fast cut responds to current momentary loudness without
+waiting for the history percentile or the next controller tick. It reduces gain
+immediately when needed and holds that cut for 1 second before upward recovery
+can begin. The main controller inherits the applied cut, so an older, higher
+gain target cannot cause a snapback. The hold is separate from the history
+window and percentile.
+
+By default there is no downward gain ramp. Upward gain changes are limited to
+0.2 dB/s, or +1 dB every 5 seconds, with a maximum boost of +6 dB in both
+directions. Playback targets -16 LUFS and capture targets -18 LUFS. Silence
+gates and maximum cuts remain -50 LUFS / 24 dB for playback and -55 LUFS / 18 dB
+for capture. These are generic directional defaults, not per-application
+tuning. The final true-peak limiter and its fixed 10 ms lookahead are unchanged
+and separate from loudness control.
+
+### What recovery sounds like
+
+The increase is a continuous slow ramp, not a 1 dB jump every five seconds.
+With the default rate, recovering from 0 dB to +6 dB takes at least 30 seconds;
+recovering from -12 dB to +6 dB takes at least 90 seconds once recovery is
+permitted. A hold, the deadband, or continuing loud content can extend or stop
+that recovery. The cap is not a destination: streams already near the target
+do not receive the full +6 dB automatically.
+
+For a game that changes from a loud battle to quiet ambience, louder material
+still represented by the history can keep the baseline gain low. When that
+constraint relaxes, the ambience warms up gradually instead of jumping to the
+target. If loud audio returns, the fast cut can reduce it without waiting for
+the next controller tick. Its 400 ms loudness measurement is distinct from the
+peak limiter's 10 ms lookahead; neither timing means instantaneous prediction.
+
+A single short burst need not move P90, so it may produce only the fast cut and
+its one-second hold, followed by slow recovery. There is no unconditional extra
+30-second hold after every burst.
+
+Configuration changes that leave a stream's settings and enabled policy
+unchanged preserve its filter. Necessary filter replacements retain the applied
+gain and the remaining fast-cut hold rather than starting from unity. A full
+daemon restart is different: DSP gain is not persisted across process restarts.
+
+These digital loudness and peak limits do not guarantee hearing-safe sound
+pressure. Device sensitivity, downstream amplification, and listening duration
+still matter; keep physical output volume appropriate for your setup.
+
 ## Installation
 
 Run the package directly:
@@ -84,8 +137,11 @@ starts `loudnessd` as a systemd user service after PipeWire. It does not write
 configuration under the user's home directory. The `settings.playback` and
 `settings.capture` option groups independently expose `targetLufs`,
 `silenceGateLufs`, `deadbandLu`, `maximumBoostDb`, `maximumCutDb`,
-`boostRateDbPerSecond`, and `cutRateDbPerSecond`. Their defaults match the
-standalone daemon defaults shown below.
+`boostRateDbPerSecond`, `historyWindowSeconds`, `historyPercentile`,
+`fastCutHoldSeconds`, and `cutRateDbPerSecond`. Their defaults match the
+standalone daemon defaults shown below. `cutRateDbPerSecond` defaults to `null`:
+the module omits that TOML key rather than writing a null value. A positive
+legacy rate can be set explicitly, but never slows the audio-path fast cut.
 
 The module also enables RTKit and authorizes members of the `audio` group to
 request its bounded real-time scheduling. Add the service user to that group:
@@ -167,6 +223,14 @@ loudnessd msg reset application-a
 
 `status-json` reports the same daemon, route, controller, source, output, peak,
 gain, and limiter state as structured JSON for soak tests and monitoring tools.
+`source_momentary_lufs` reports current 400 ms source loudness; `reference_lufs`
+is the history-percentile reference. `requested_gain_db` is the controller's
+requested baseline, while `gain_db` is actual audio-path gain, including fast
+cuts; `fast_cut_hold_seconds` reports the hold state. Raw 3-second source and
+output LUFS remain visible. When available, monitor convergence uses
+`reference_lufs + gain_db`, so intentionally quieter passages are not treated
+as failures to reach the target.
+
 It also includes the meter sequence, configured target, and gain-limit state so
 monitors can distinguish silence from a stalled audio callback and exclude
 target-unreachable streams from convergence scoring, including while their gain
@@ -184,9 +248,9 @@ loudnessd monitor --duration 3600 --interval 1000 --expect-active 2 \
 
 The final JSON summary reports IPC failures, unhealthy routes, stalled callback
 sequences, daemon restarts, active-stream shortfalls, in-progress slew
-observations, skipped-stream observations, convergence within 1.5 LU after the
-measured output settles, minimum and maximum applied gain, boost and cut
-observation counts, maximum limiter reduction, and maximum observed post-filter
+observations, skipped-stream observations, convergence within 1.5 LU, minimum
+and maximum applied gain, boost and cut observation counts, maximum limiter
+reduction, and maximum observed post-filter
 true peak. It also records expected, minimum, and maximum active stream counts,
 the maximum simultaneous skipped stream count, initial, final, and peak resident
 memory, memory growth, and average daemon CPU use. CPU accounting remains valid
@@ -243,19 +307,23 @@ independently at both the default and application level:
 target_lufs = -16.0
 silence_gate_lufs = -50.0
 deadband_lu = 0.75
-maximum_boost_db = 18.0
+maximum_boost_db = 6.0
 maximum_cut_db = 24.0
-boost_rate_db_per_second = 1.0
-cut_rate_db_per_second = 3.0
+boost_rate_db_per_second = 0.2
+history_window_seconds = 30.0
+history_percentile = 90.0
+fast_cut_hold_seconds = 1.0
 
 [capture]
 target_lufs = -18.0
 silence_gate_lufs = -55.0
 deadband_lu = 1.0
-maximum_boost_db = 12.0
+maximum_boost_db = 6.0
 maximum_cut_db = 18.0
-boost_rate_db_per_second = 0.5
-cut_rate_db_per_second = 3.0
+boost_rate_db_per_second = 0.2
+history_window_seconds = 30.0
+history_percentile = 90.0
+fast_cut_hold_seconds = 1.0
 
 [defaults]
 playback = true
@@ -274,6 +342,19 @@ values inherit the built-in directional defaults. An omitted application
 direction inherits from `[defaults]`. Matching prefers PipeWire's
 `application.id`, then process binary, then application name. Streams without
 those properties receive a node-scoped fallback identity.
+
+`history_window_seconds` must be greater than zero and at most 300 seconds;
+`history_percentile` must be in `(0, 100]`; `fast_cut_hold_seconds` must be
+non-negative. All numeric controller values must be finite. The NixOS module
+checks these ranges when generating configuration, and the daemon validates
+the TOML values, including finiteness.
+
+Omit `cut_rate_db_per_second` for immediate downward controller changes. An
+existing positive value, for example `cut_rate_db_per_second = 3.0`, remains an
+optional legacy main-controller ramp. Remove that key from an existing config
+to select the default immediate behavior. The audio-path fast cut is always
+immediate, even with an explicit legacy rate. TOML has no null value; do not
+write `cut_rate_db_per_second = null`.
 
 For a standalone installation, starting `loudnessd --daemon` without
 `--config` uses `$XDG_CONFIG_HOME/loudnessd/config.toml`, falling back to

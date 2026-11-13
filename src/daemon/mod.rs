@@ -38,6 +38,7 @@ use crate::{
 mod command;
 mod control_clock;
 mod discovery;
+mod dynamics;
 mod process_metrics;
 mod recovery;
 mod reporting;
@@ -80,6 +81,7 @@ struct Daemon {
     runtime_config: RuntimeConfig,
     enabled: bool,
     control_clock: control_clock::ControlClock,
+    retained_dynamics: HashMap<u32, dynamics::DynamicsCheckpoint>,
 }
 
 impl Daemon {
@@ -180,7 +182,28 @@ impl Daemon {
         effective
             .controller_configs()
             .map_err(|error| format!("invalid controller configuration: {error}"))?;
-        if !self.bypass_all() {
+        let mut next_controllers = ControllerBank::defaults();
+        next_controllers
+            .apply_user_config(effective.clone())
+            .expect("controller configuration was validated above");
+        let affected: HashSet<_> = self
+            .managed
+            .iter()
+            .filter_map(|(node_id, managed)| {
+                let control = match managed {
+                    ManagedStream::Connecting { control, .. }
+                    | ManagedStream::Active { control, .. } => control,
+                };
+                (!dynamics::settings_unchanged(
+                    &self.controllers,
+                    &next_controllers,
+                    control.domain(),
+                    control.application_id(),
+                ))
+                .then_some(*node_id)
+            })
+            .collect();
+        if !self.bypass_selected(Some(&affected)) {
             return Err("could not bypass every stream; configuration was not applied".to_owned());
         }
         self.controllers
@@ -205,6 +228,8 @@ impl Daemon {
                 .parse::<u32>()
                 .is_ok_and(|node_id| present.contains(&node_id))
         });
+        self.retained_dynamics
+            .retain(|node_id, _| present.contains(node_id));
         self.managed.retain(|node_id, _| present.contains(node_id));
         self.skipped.retain(|node_id, _| present.contains(node_id));
         self.channel_settler
@@ -265,6 +290,7 @@ impl Daemon {
                 } else {
                     eprintln!("loudnessd: stream {node_id} {reason}; reconnecting");
                 }
+                self.remember_dynamics(node_id, &filter);
                 self.sync_recovery_journal(None);
                 self.managed.insert(
                     node_id,
@@ -291,6 +317,7 @@ impl Daemon {
             match result {
                 Ok(bypassed) => {
                     self.retained_direct_links.push(bypassed.direct_links);
+                    self.remember_dynamics(node_id, &filter);
                     eprintln!("loudnessd: recovered broken route for stream {node_id}");
                 }
                 Err(error) => {
@@ -398,6 +425,14 @@ impl Daemon {
             filter.add_mono_port(PortDirection::Output, format!("output_{channel}"), channel)?;
         }
         filter.enable_meter(PIPEWIRE_SAMPLE_RATE)?;
+        filter.configure_dynamics(self.controllers.config(stream.domain))?;
+        if let Some(checkpoint) = self.retained_dynamics.get(&stream.node_id) {
+            filter.restore_dynamics(
+                checkpoint.gain_db,
+                checkpoint.remaining_hold(Instant::now()),
+                checkpoint.sequence,
+            )?;
+        }
         Ok(filter.connect_inactive()?)
     }
 
@@ -544,17 +579,56 @@ impl Daemon {
     }
 
     fn bypass_all(&mut self) -> bool {
+        self.bypass_selected(None)
+    }
+
+    fn remember_dynamics(&mut self, node_id: u32, filter: &ConnectedFilter) {
+        if let Some(snapshot) = filter.latest_meter_snapshot() {
+            self.retained_dynamics.insert(
+                node_id,
+                dynamics::DynamicsCheckpoint::new(snapshot, Instant::now()),
+            );
+        }
+    }
+
+    fn bypass_selected(&mut self, selected: Option<&HashSet<u32>>) -> bool {
         let managed = std::mem::take(&mut self.managed);
         let mut succeeded = true;
         for (node_id, stream) in managed {
-            let ManagedStream::Active {
-                stream,
-                mut filter,
-                control,
-                route,
-            } = stream
-            else {
+            if selected.is_some_and(|selected| !selected.contains(&node_id)) {
+                self.managed.insert(node_id, stream);
                 continue;
+            }
+            let (stream, mut filter, control, route) = match stream {
+                ManagedStream::Active {
+                    stream,
+                    filter,
+                    control,
+                    route,
+                } => (stream, filter, control, route),
+                ManagedStream::Connecting {
+                    stream,
+                    mut filter,
+                    control,
+                } => {
+                    if let Err(error) = filter.set_active(false) {
+                        eprintln!(
+                            "loudnessd: failed to deactivate connecting stream {node_id}: {error}"
+                        );
+                        self.managed.insert(
+                            node_id,
+                            ManagedStream::Connecting {
+                                stream,
+                                filter,
+                                control,
+                            },
+                        );
+                        succeeded = false;
+                    } else {
+                        self.remember_dynamics(node_id, &filter);
+                    }
+                    continue;
+                }
             };
             let result = {
                 let mut backend = PipewireRouteBackend::new(
@@ -568,7 +642,13 @@ impl Daemon {
                 bypass(&mut backend, route)
             };
             match result {
-                Ok(bypassed) => self.retained_direct_links.push(bypassed.direct_links),
+                Ok(bypassed) => {
+                    self.retained_direct_links.push(bypassed.direct_links);
+                    // Read only after deactivation so a final audio-path cut
+                    // cannot race the checkpoint. Keep the earlier checkpoint
+                    // if the replacement has not produced its first meter yet.
+                    self.remember_dynamics(node_id, &filter);
+                }
                 Err(error) => {
                     succeeded = false;
                     eprintln!(
@@ -669,6 +749,7 @@ pub fn run(
         runtime_config: RuntimeConfig::new(baseline),
         enabled: true,
         control_clock: control_clock::ControlClock::new(Instant::now(), CONTROL_INTERVAL),
+        retained_dynamics: HashMap::new(),
     };
 
     daemon.recover_prior_routes();

@@ -504,8 +504,27 @@ unsafe fn process_cycle(
             );
         }
     }
-    // This gain never enters the source meter or normalization/fastcut state.
-    // Keep the final clipping limiter downstream even when the UI boosts >1.
+    let limiter_reduction_db = processing_state.map_or(0.0, |index| {
+        limit_output_ports(
+            &mut data.processing_states[index].limiter,
+            &data.ports,
+            buffers,
+            sample_count,
+        )
+    });
+    data.maximum_limiter_reduction_db = data.maximum_limiter_reduction_db.max(limiter_reduction_db);
+    let output_reading = processing_state.and_then(|index| {
+        meter_ports(
+            &mut data.processing_states[index].output,
+            &data.ports,
+            buffers,
+            sample_count,
+            PortDirection::Output,
+        )
+    });
+
+    // User volume is outside the complete normalization/DSP boundary, including
+    // the limiter and output meter. Boosting here can exceed full scale.
     let user_gain = f32::from_bits(data.user_gain_bits.load(Ordering::Relaxed));
     let ramp_samples = (sample_rate.unwrap_or(48_000) / 200).max(1) as usize;
     if data.user_gain_target != user_gain {
@@ -541,24 +560,6 @@ unsafe fn process_cycle(
     } else {
         previous_user_gain + step * sample_count as f32
     };
-    let limiter_reduction_db = processing_state.map_or(0.0, |index| {
-        limit_output_ports(
-            &mut data.processing_states[index].limiter,
-            &data.ports,
-            buffers,
-            sample_count,
-        )
-    });
-    data.maximum_limiter_reduction_db = data.maximum_limiter_reduction_db.max(limiter_reduction_db);
-    let output_reading = processing_state.and_then(|index| {
-        meter_ports(
-            &mut data.processing_states[index].output,
-            &data.ports,
-            buffers,
-            sample_count,
-            PortDirection::Output,
-        )
-    });
     if let Some(source) = source_reading {
         data.latest_metrics.publish(ProcessMetrics {
             source,
@@ -849,10 +850,12 @@ mod tests {
     }
 
     #[test]
-    fn downstream_user_gain_does_not_change_source_meter_or_fastcut() {
+    fn user_volume_is_after_all_dsp_and_meters_including_the_limiter() {
         const FRAMES: usize = 480;
         let mut reference = None;
-        for gain in [0.0, 0.125, 1.0, 8.0] {
+        let mut reference_cycles = Vec::new();
+        let mut boosted_above_full_scale = false;
+        for gain in [1.0, 0.0, 0.125, 8.0] {
             let mut data = callback_data_with_stereo_ports();
             data.enable_meter(48_000).unwrap();
             data.configure_dynamics(ControllerConfig::default())
@@ -877,7 +880,7 @@ mod tests {
             };
             for cycle in 0..100 {
                 for frame in 0..FRAMES {
-                    let amplitude = if cycle < 50 { 0.5 } else { 0.01 };
+                    let amplitude = if cycle < 50 { 2.0 } else { 0.01 };
                     input[frame] = amplitude
                         * (std::f32::consts::TAU * 997.0 * (cycle * FRAMES + frame) as f32
                             / 48_000.0)
@@ -887,7 +890,17 @@ mod tests {
                 // SAFETY: four disjoint arrays provide FRAMES writable samples.
                 unsafe { process_cycle(&mut data, &buffers, Some(48_000), FRAMES as u32) };
                 assert_eq!(output, output_right);
-                assert!(output.iter().all(|sample| sample.abs() <= 0.9));
+                if gain == 1.0 {
+                    assert!(output.iter().all(|sample| sample.abs() <= 0.9));
+                    reference_cycles.push(output);
+                } else if cycle > 0 {
+                    for (actual, normalized) in output.iter().zip(&reference_cycles[cycle]) {
+                        assert!((actual - normalized * gain).abs() < 0.00001);
+                    }
+                }
+                if gain == 8.0 && output.iter().any(|sample| sample.abs() > 1.0) {
+                    boosted_above_full_scale = true;
+                }
             }
             let meter = data.latest_meter_snapshot().unwrap();
             let source_and_dynamics = (
@@ -896,6 +909,10 @@ mod tests {
                 meter.applied_gain_db,
                 meter.fast_cut_sequence,
                 meter.fast_cut_hold_seconds,
+                meter.output_loudness_lufs,
+                meter.output_true_peak_dbtp,
+                meter.limiter_reduction_db,
+                meter.maximum_limiter_reduction_db,
             );
             if let Some(expected) = reference {
                 assert_eq!(source_and_dynamics, expected);
@@ -917,6 +934,10 @@ mod tests {
             assert_eq!(data.dynamics.as_ref().unwrap().gain_db(), 0.0);
             assert_eq!(data.dynamics.as_ref().unwrap().reduction_sequence(), 0);
         }
+        assert!(
+            boosted_above_full_scale,
+            "user boost must not be limited afterward"
+        );
     }
 
     #[test]

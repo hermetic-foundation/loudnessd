@@ -211,8 +211,6 @@ impl SoakAccumulator {
             }
 
             let eligible = stream.lifecycle == StreamLifecycle::Active
-                && stream.user_muted != Some(true)
-                && stream.user_volume != Some(0.0)
                 && stream.route == RouteStatus::Healthy
                 && !stream.gain_clamped
                 && stream.limiter_db <= 0.01
@@ -223,15 +221,7 @@ impl SoakAccumulator {
             let normalized_reference = stream
                 .reference_lufs
                 .map(|lufs| lufs + stream.gain_db)
-                .or_else(|| {
-                    // Final output includes intentional user trim. Without a
-                    // source reference, do not score that as normalization error.
-                    stream
-                        .user_volume
-                        .is_none_or(|level| level == 1.0)
-                        .then_some(stream.output_lufs)
-                        .flatten()
-                });
+                .or(stream.output_lufs);
             if eligible && let Some(output_lufs) = normalized_reference {
                 self.report.convergence_eligible_observations += 1;
                 if (output_lufs - stream.target_lufs).abs() <= CONVERGENCE_TOLERANCE_LU {
@@ -426,8 +416,8 @@ mod tests {
     }
 
     #[test]
-    fn manual_trim_does_not_penalize_normalization_and_mute_is_not_scored() {
-        let mut observation = status(1, -40.0);
+    fn user_volume_and_mute_do_not_affect_pre_volume_normalization_scoring() {
+        let mut observation = status(1, -13.0);
         observation.streams[0].user_volume = Some(0.5);
         observation.streams[0].user_muted = Some(false);
         observation.streams[0].reference_lufs = Some(-20.0);
@@ -442,8 +432,8 @@ mod tests {
         observation.streams[0].user_volume = Some(0.0);
         accumulator.observe(&observation);
         let report = accumulator.finish(Duration::from_secs(4));
-        assert_eq!(report.convergence_eligible_observations, 1);
-        assert_eq!(report.convergence_passing_observations, 1);
+        assert_eq!(report.convergence_eligible_observations, 4);
+        assert_eq!(report.convergence_passing_observations, 4);
     }
 
     #[test]

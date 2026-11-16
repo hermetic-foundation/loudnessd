@@ -109,7 +109,8 @@ def main():
             time.sleep(4)
             after = status()["streams"][0]
             near(after["source_lufs"], before["source_lufs"], 0.1)
-            assert after["output_lufs"] - before["output_lufs"] > 15, (before, after)
+            # The output meter is inside loudnessd's boundary, before user volume.
+            assert abs(after["output_lufs"] - before["output_lufs"]) < 1.0, (before, after)
             assert abs(after["gain_db"] - before["gain_db"]) < 1.0, (before, after)
             command("volume", node, 0.6)
             config.write_text('[defaults]\nplayback = true\ncapture = false\n[playback]\ntarget_lufs = -29.0\n')

@@ -23,13 +23,16 @@ implementation but reject commands until their route is healthy.
 
 ## Audio And Handoff
 
-The signal path is source meter/P90/fastcut -> normalization gain -> user gain
--> final true-peak limiter -> output meter. Source measurements and requested
+The signal path is source meter/P90/fastcut -> normalization gain -> true-peak
+limiter -> output meter -> user gain. All loudnessd DSP and measurement happens
+before the QuickShell per-application volume. Source measurements and requested
 normalization gain never divide by metadata-derived effective volume.
-Output measurements intentionally include user controls. Ordinary volume/mute
+Output measurements describe normalized audio, excluding user controls. A user
+boost above unity can exceed full scale and clip downstream: loudnessd does not
+limit or compensate that deliberate boost. Ordinary volume/mute
 changes use a five-millisecond linear-amplitude ramp, including to/from zero.
-Monitor convergence uses the source percentile plus normalization gain, excludes
-user mute/zero volume, and avoids final-output fallback when manually trimmed.
+Monitor convergence uses the source percentile plus normalization gain, falling
+back to the normalized output meter. User mute/zero volume does not affect it.
 
 Only the first explicit command migrates a stream. The daemon reads fresh
 original Props, preserves logical channelVolumes/mute (scalar volume when
@@ -87,7 +90,7 @@ A paused graph that cannot acknowledge/drain the handoff returns an error.
 WirePlumber, a null sink, and generated stereo playback in a private runtime.
 It checks first-command unity handoff, soft override versus logical controls,
 mute preservation, removal of contaminated gain history, independent source and
-normalization gain, downstream output attenuation, reload retention, bypass,
+normalization gain and pre-user output metering, reload retention, bypass,
 SIGKILL/restart journal recovery, and graceful-shutdown restoration. It never
 connects to the desktop server. Run from the repository with PipeWire tools,
 WirePlumber, and Python available:

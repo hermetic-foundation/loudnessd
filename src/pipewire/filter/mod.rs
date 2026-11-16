@@ -51,6 +51,7 @@ pub struct MeterSnapshot {
     pub source_loudness_lufs: f32,
     pub source_momentary_lufs: Option<f32>,
     pub source_true_peak_dbtp: Option<f32>,
+    /// Normalized output after limiting, before the independent user volume.
     pub output_loudness_lufs: Option<f32>,
     pub output_true_peak_dbtp: Option<f32>,
     pub limiter_reduction_db: f32,

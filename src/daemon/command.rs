@@ -2,9 +2,9 @@
 
 use crate::normalization::SignalDomain;
 
-pub(super) const USAGE: &str = "usage: loudnessd msg status|status-json|reload|enable|disable|set APP playback|capture on|off|reset APP|export";
+pub(super) const USAGE: &str = "usage: loudnessd msg status|status-json|reload|enable|disable|set APP playback|capture on|off|reset APP|volume NODE LEVEL|mute NODE on|off|export";
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(super) enum Command {
     Status,
     StatusJson,
@@ -20,6 +20,14 @@ pub(super) enum Command {
         application_id: String,
     },
     Export,
+    Volume {
+        node_id: u32,
+        level: f32,
+    },
+    Mute {
+        node_id: u32,
+        muted: bool,
+    },
 }
 
 pub(super) fn parse(request: &str) -> Result<Command, String> {
@@ -39,6 +47,24 @@ pub(super) fn parse(request: &str) -> Result<Command, String> {
             application_id: (*application_id).to_owned(),
         }),
         ["export"] => Ok(Command::Export),
+        ["volume", node, level] => {
+            let level: f32 = level.parse().map_err(|_| "invalid volume level")?;
+            if !level.is_finite() || !(0.0..=2.0).contains(&level) {
+                return Err("volume level must be finite and in 0..2".to_owned());
+            }
+            Ok(Command::Volume {
+                node_id: node.parse().map_err(|_| "invalid node id")?,
+                level,
+            })
+        }
+        ["mute", node, muted] => Ok(Command::Mute {
+            node_id: node.parse().map_err(|_| "invalid node id")?,
+            muted: match *muted {
+                "on" => true,
+                "off" => false,
+                _ => return Err("mute expects on or off".to_owned()),
+            },
+        }),
         _ => Err(USAGE.to_owned()),
     }
 }
@@ -93,6 +119,29 @@ mod tests {
             }
         );
         assert_eq!(parse("export").unwrap(), Command::Export);
+    }
+
+    #[test]
+    fn validates_playback_volume_and_mute_commands() {
+        assert_eq!(
+            parse("volume\t42\t0.5").unwrap(),
+            Command::Volume {
+                node_id: 42,
+                level: 0.5
+            }
+        );
+        assert_eq!(
+            parse("mute\t42\ton").unwrap(),
+            Command::Mute {
+                node_id: 42,
+                muted: true
+            }
+        );
+        for level in ["NaN", "inf", "-0.1", "2.1", "bogus"] {
+            assert!(parse(&format!("volume\t42\t{level}")).is_err());
+        }
+        assert!(parse("volume\t-1\t0.5").is_err());
+        assert!(parse("mute\t42\ttrue").is_err());
     }
 
     #[test]

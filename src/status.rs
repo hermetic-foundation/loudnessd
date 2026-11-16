@@ -31,6 +31,12 @@ pub enum ControlStatus {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct StreamStatus {
     pub node_id: u32,
+    #[serde(default)]
+    pub post_volume_supported: bool,
+    #[serde(default)]
+    pub user_volume: Option<f32>,
+    #[serde(default)]
+    pub user_muted: Option<bool>,
     pub filter_node_id: Option<u32>,
     #[serde(default)]
     pub filter_state: Option<String>,
@@ -214,6 +220,9 @@ mod tests {
             }),
             streams: vec![StreamStatus {
                 node_id: 42,
+                post_volume_supported: true,
+                user_volume: None,
+                user_muted: None,
                 filter_node_id: Some(84),
                 filter_state: Some("streaming".to_owned()),
                 filter_error: None,

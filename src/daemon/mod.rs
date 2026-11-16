@@ -43,6 +43,7 @@ mod process_metrics;
 mod recovery;
 mod reporting;
 pub mod runtime_config;
+mod user_volume;
 
 use command::Command;
 use discovery::{ChannelReadiness, ChannelSettler, channel_readiness};
@@ -82,6 +83,11 @@ struct Daemon {
     enabled: bool,
     control_clock: control_clock::ControlClock,
     retained_dynamics: HashMap<u32, dynamics::DynamicsCheckpoint>,
+    graph_tracker: crate::pipewire::graph::GraphTracker,
+    user_volumes: HashMap<u32, user_volume::UserVolume>,
+    volume_journal: user_volume::VolumeJournal,
+    volume_sequence: i32,
+    resume_user_volumes: HashMap<u32, (f32, bool)>,
 }
 
 impl Daemon {
@@ -91,6 +97,23 @@ impl Daemon {
         self.reconcile_routes();
         self.discover_streams();
         self.connect_pending_filters();
+        let resume: Vec<_> = self
+            .resume_user_volumes
+            .iter()
+            .map(|(node, controls)| (*node, *controls))
+            .collect();
+        for (node, (level, muted)) in resume {
+            if matches!(self.managed.get(&node), Some(ManagedStream::Active { .. })) {
+                match self.set_user_volume(node, Some(level), Some(muted)) {
+                    Ok(_) => {
+                        self.resume_user_volumes.remove(&node);
+                    }
+                    Err(error) => {
+                        eprintln!("loudnessd: cannot resume downstream volume for {node}: {error}")
+                    }
+                }
+            }
+        }
         self.update_controls();
     }
 
@@ -117,6 +140,8 @@ impl Daemon {
     fn handle_request(&mut self, request: &str) -> Result<String, String> {
         match command::parse(request)? {
             Command::Status => Ok(self.status().to_text()),
+            Command::Volume { node_id, level } => self.set_user_volume(node_id, Some(level), None),
+            Command::Mute { node_id, muted } => self.set_user_volume(node_id, None, Some(muted)),
             Command::StatusJson => {
                 serde_json::to_string(&self.status()).map_err(|error| error.to_string())
             }
@@ -168,13 +193,24 @@ impl Daemon {
     }
 
     fn status(&self) -> DaemonStatus {
-        reporting::snapshot(
+        let mut status = reporting::snapshot(
             self.enabled,
             &self.controllers,
             &self.managed,
             &self.skipped,
             &self.graph.borrow(),
-        )
+        );
+        for stream in &mut status.streams {
+            if let Some(volume) = self
+                .user_volumes
+                .get(&stream.node_id)
+                .filter(|volume| volume.published)
+            {
+                stream.user_volume = Some(volume.level);
+                stream.user_muted = Some(volume.muted);
+            }
+        }
+        status
     }
 
     fn reconfigure(&mut self, next: RuntimeConfig) -> Result<(), String> {
@@ -203,9 +239,16 @@ impl Daemon {
                 .then_some(*node_id)
             })
             .collect();
+        let resume: Vec<_> = self
+            .user_volumes
+            .iter()
+            .filter(|(node, volume)| affected.contains(node) && volume.published)
+            .map(|(node, volume)| (*node, (volume.level, volume.muted)))
+            .collect();
         if !self.bypass_selected(Some(&affected)) {
             return Err("could not bypass every stream; configuration was not applied".to_owned());
         }
+        self.resume_user_volumes.extend(resume);
         self.controllers
             .apply_user_config(effective)
             .expect("controller configuration was validated before bypass");
@@ -230,6 +273,19 @@ impl Daemon {
         });
         self.retained_dynamics
             .retain(|node_id, _| present.contains(node_id));
+        self.resume_user_volumes
+            .retain(|node, _| present.contains(node));
+        let gone: Vec<_> = self
+            .user_volumes
+            .keys()
+            .copied()
+            .filter(|node| !present.contains(node))
+            .collect();
+        for node in gone {
+            if let Err(error) = self.restore_user_volume(node) {
+                eprintln!("loudnessd: cannot discard departed stream volume: {error}");
+            }
+        }
         self.managed.retain(|node_id, _| present.contains(node_id));
         self.skipped.retain(|node_id, _| present.contains(node_id));
         self.channel_settler
@@ -255,6 +311,20 @@ impl Daemon {
         };
 
         for (node_id, health) in unhealthy {
+            let resume = self
+                .user_volumes
+                .get(&node_id)
+                .filter(|volume| volume.published)
+                .map(|volume| (volume.level, volume.muted));
+            if let Err(error) = self.restore_user_volume(node_id) {
+                eprintln!(
+                    "loudnessd: cannot restore stream {node_id} before route repair: {error}"
+                );
+                continue;
+            }
+            if let Some(controls) = resume {
+                self.resume_user_volumes.insert(node_id, controls);
+            }
             let Some(ManagedStream::Active {
                 stream,
                 mut filter,
@@ -579,6 +649,7 @@ impl Daemon {
     }
 
     fn bypass_all(&mut self) -> bool {
+        self.resume_user_volumes.clear();
         self.bypass_selected(None)
     }
 
@@ -592,6 +663,18 @@ impl Daemon {
     }
 
     fn bypass_selected(&mut self, selected: Option<&HashSet<u32>>) -> bool {
+        let restore: Vec<_> = self
+            .user_volumes
+            .keys()
+            .copied()
+            .filter(|id| selected.is_none_or(|selected| selected.contains(id)))
+            .collect();
+        for node_id in restore {
+            if let Err(error) = self.restore_user_volume(node_id) {
+                eprintln!("loudnessd: cannot restore stream {node_id} before bypass: {error}");
+                return false;
+            }
+        }
         let managed = std::mem::take(&mut self.managed);
         let mut succeeded = true;
         for (node_id, stream) in managed {
@@ -728,8 +811,12 @@ pub fn run(
         .get()
         .ok_or("PipeWire did not report its server identity")?;
     let registry = core.get_registry_rc()?;
-    let (graph, _registry_listener) = track_graph(&registry);
+    let (graph, graph_tracker) = track_graph(&registry);
     let recovery_journal = RecoveryJournal::new(path_for_socket(&socket_path), server_cookie);
+    let volume_journal = user_volume::VolumeJournal::new(
+        socket_path.with_file_name("loudnessd-volumes.json"),
+        server_cookie,
+    );
     let control_server = ControlServer::bind(socket_path)?;
     let terminated = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(SIGINT, Arc::clone(&terminated))?;
@@ -750,8 +837,14 @@ pub fn run(
         enabled: true,
         control_clock: control_clock::ControlClock::new(Instant::now(), CONTROL_INTERVAL),
         retained_dynamics: HashMap::new(),
+        graph_tracker,
+        user_volumes: HashMap::new(),
+        volume_journal,
+        volume_sequence: 0,
+        resume_user_volumes: HashMap::new(),
     };
 
+    daemon.recover_user_volumes()?;
     daemon.recover_prior_routes();
 
     eprintln!("loudnessd: monitoring and normalizing PipeWire application streams");
@@ -766,7 +859,6 @@ pub fn run(
         // re-enter already-freed native objects. The process is about to exit,
         // so retain the disconnected object graph and let the OS reclaim it.
         std::mem::forget(daemon);
-        std::mem::forget(_registry_listener);
         std::mem::forget(_core_listener);
         std::mem::forget(context);
         std::mem::forget(main_loop);

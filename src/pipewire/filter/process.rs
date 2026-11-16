@@ -24,6 +24,14 @@ pub(super) struct FilterCallbackData {
     destroyed: AtomicBool,
     ports: Vec<CallbackPort>,
     target_gain_bits: AtomicU32,
+    user_gain_bits: AtomicU32,
+    handoff: AtomicU32,
+    handoff_ack: AtomicU32,
+    held_audio_ns: AtomicU64,
+    user_gain_current: f32,
+    user_gain_target: f32,
+    user_gain_step: f32,
+    user_gain_remaining: usize,
     default_sample_rate: Option<u32>,
     processing_states: Vec<ProcessingState>,
     active_processing_state: Option<usize>,
@@ -63,6 +71,14 @@ impl Default for FilterCallbackData {
             destroyed: AtomicBool::new(false),
             ports: Vec::new(),
             target_gain_bits: AtomicU32::new(0.0_f32.to_bits()),
+            user_gain_bits: AtomicU32::new(1.0_f32.to_bits()),
+            handoff: AtomicU32::new(0),
+            handoff_ack: AtomicU32::new(0),
+            held_audio_ns: AtomicU64::new(0),
+            user_gain_current: 1.0,
+            user_gain_target: 1.0,
+            user_gain_step: 0.0,
+            user_gain_remaining: 0,
             default_sample_rate: None,
             processing_states: Vec::new(),
             active_processing_state: None,
@@ -74,6 +90,23 @@ impl Default for FilterCallbackData {
 }
 
 impl FilterCallbackData {
+    pub(super) fn handoff(&self, mode: u32) {
+        self.handoff.store(mode, Ordering::Release);
+    }
+
+    pub(super) fn handoff_ack(&self) -> u32 {
+        self.handoff_ack.load(Ordering::Acquire)
+    }
+
+    pub(super) fn held_audio_ns(&self) -> u64 {
+        self.held_audio_ns.load(Ordering::Acquire)
+    }
+
+    pub(super) fn set_user_gain(&self, gain: f32) {
+        debug_assert!(gain.is_finite() && (0.0..=8.0).contains(&gain));
+        self.user_gain_bits.store(gain.to_bits(), Ordering::Relaxed);
+    }
+
     pub(super) fn configure_dynamics(
         &mut self,
         config: ControllerConfig,
@@ -371,6 +404,45 @@ unsafe fn process_cycle(
     sample_rate: Option<u32>,
     sample_count: u32,
 ) {
+    let handoff = data.handoff.load(Ordering::Acquire);
+    if handoff != 0 {
+        if handoff == 2 && data.handoff_ack.load(Ordering::Relaxed) != 2 {
+            for state in &mut data.processing_states {
+                state.reset();
+            }
+            if let Some(dynamics) = &mut data.dynamics {
+                dynamics.reset();
+            }
+            for port in &mut data.ports {
+                port.gain = GainStage::default();
+            }
+            data.maximum_limiter_reduction_db = 0.0;
+            data.target_gain_bits
+                .store(0.0_f32.to_bits(), Ordering::Relaxed);
+            data.latest_metrics.version.store(0, Ordering::Release);
+            data.user_gain_current = 0.0;
+            data.user_gain_target = 0.0;
+            data.user_gain_remaining = 0;
+        }
+        for (index, port) in data.ports.iter().enumerate() {
+            if port.direction == PortDirection::Output
+                && let Some(buffer) = buffers.get(index)
+            {
+                // SAFETY: acquired outputs contain sample_count writable samples.
+                unsafe { std::slice::from_raw_parts_mut(buffer.as_ptr(), sample_count as usize) }
+                    .fill(0.0);
+            }
+        }
+        data.handoff_ack.store(handoff, Ordering::Release);
+        if let Some(rate) = sample_rate.filter(|rate| *rate > 0) {
+            data.held_audio_ns.fetch_add(
+                u64::from(sample_count) * 1_000_000_000 / u64::from(rate),
+                Ordering::Release,
+            );
+        }
+        return;
+    }
+    data.handoff_ack.store(0, Ordering::Release);
     let processing_state = processing_state_index(&data.processing_states, sample_rate);
     if data.active_processing_state != processing_state {
         if let Some(index) = processing_state {
@@ -432,6 +504,43 @@ unsafe fn process_cycle(
             );
         }
     }
+    // This gain never enters the source meter or normalization/fastcut state.
+    // Keep the final clipping limiter downstream even when the UI boosts >1.
+    let user_gain = f32::from_bits(data.user_gain_bits.load(Ordering::Relaxed));
+    let ramp_samples = (sample_rate.unwrap_or(48_000) / 200).max(1) as usize;
+    if data.user_gain_target != user_gain {
+        data.user_gain_target = user_gain;
+        data.user_gain_remaining = ramp_samples;
+        data.user_gain_step = (user_gain - data.user_gain_current) / ramp_samples as f32;
+    }
+    let previous_user_gain = data.user_gain_current;
+    let remaining = data.user_gain_remaining;
+    let step = data.user_gain_step;
+    for (index, port) in data.ports.iter().enumerate() {
+        if port.direction == PortDirection::Output
+            && let Some(buffer) = buffers.get(index)
+        {
+            // SAFETY: the acquired output contains sample_count writable samples.
+            for (index, sample) in
+                unsafe { std::slice::from_raw_parts_mut(buffer.as_ptr(), sample_count as usize) }
+                    .iter_mut()
+                    .enumerate()
+            {
+                let gain = if index + 1 >= remaining {
+                    user_gain
+                } else {
+                    previous_user_gain + step * (index + 1) as f32
+                };
+                *sample *= gain;
+            }
+        }
+    }
+    data.user_gain_remaining = remaining.saturating_sub(sample_count as usize);
+    data.user_gain_current = if data.user_gain_remaining == 0 {
+        user_gain
+    } else {
+        previous_user_gain + step * sample_count as f32
+    };
     let limiter_reduction_db = processing_state.map_or(0.0, |index| {
         limit_output_ports(
             &mut data.processing_states[index].limiter,
@@ -737,6 +846,77 @@ mod tests {
         assert!(final_snapshot.applied_gain_db < -6.0);
         assert_eq!(final_snapshot.fast_cut_hold_seconds, 0.0);
         assert!(data.dynamics.as_ref().unwrap().reduction_sequence() > 0);
+    }
+
+    #[test]
+    fn downstream_user_gain_does_not_change_source_meter_or_fastcut() {
+        const FRAMES: usize = 480;
+        let mut reference = None;
+        for gain in [0.0, 0.125, 1.0, 8.0] {
+            let mut data = callback_data_with_stereo_ports();
+            data.enable_meter(48_000).unwrap();
+            data.configure_dynamics(ControllerConfig::default())
+                .unwrap();
+            data.set_user_gain(gain);
+            let mut input = [0.0_f32; FRAMES];
+            let mut input_right = [0.0_f32; FRAMES];
+            let mut output = [0.0_f32; FRAMES];
+            let mut output_right = [0.0_f32; FRAMES];
+            let buffers = CycleBuffers {
+                pointers: {
+                    let mut pointers = [std::ptr::null_mut(); MAX_METER_CHANNELS];
+                    pointers[..4].copy_from_slice(&[
+                        input.as_mut_ptr(),
+                        output.as_mut_ptr(),
+                        input_right.as_mut_ptr(),
+                        output_right.as_mut_ptr(),
+                    ]);
+                    pointers
+                },
+                len: 4,
+            };
+            for cycle in 0..100 {
+                for frame in 0..FRAMES {
+                    let amplitude = if cycle < 50 { 0.5 } else { 0.01 };
+                    input[frame] = amplitude
+                        * (std::f32::consts::TAU * 997.0 * (cycle * FRAMES + frame) as f32
+                            / 48_000.0)
+                            .sin();
+                    input_right[frame] = input[frame];
+                }
+                // SAFETY: four disjoint arrays provide FRAMES writable samples.
+                unsafe { process_cycle(&mut data, &buffers, Some(48_000), FRAMES as u32) };
+                assert_eq!(output, output_right);
+                assert!(output.iter().all(|sample| sample.abs() <= 0.9));
+            }
+            let meter = data.latest_meter_snapshot().unwrap();
+            let source_and_dynamics = (
+                meter.source_loudness_lufs,
+                meter.source_momentary_lufs,
+                meter.applied_gain_db,
+                meter.fast_cut_sequence,
+                meter.fast_cut_hold_seconds,
+            );
+            if let Some(expected) = reference {
+                assert_eq!(source_and_dynamics, expected);
+            } else {
+                reference = Some(source_and_dynamics);
+            }
+            if gain == 0.0 {
+                assert!(output.iter().all(|sample| *sample == 0.0));
+            }
+            data.handoff(1);
+            // SAFETY: the same arrays remain valid for this process cycle.
+            unsafe { process_cycle(&mut data, &buffers, Some(48_000), FRAMES as u32) };
+            assert_eq!(data.handoff_ack(), 1);
+            assert!(output.iter().all(|sample| *sample == 0.0));
+            data.handoff(2);
+            // SAFETY: the same arrays remain valid for this process cycle.
+            unsafe { process_cycle(&mut data, &buffers, Some(48_000), FRAMES as u32) };
+            assert_eq!(data.latest_meter_snapshot(), None);
+            assert_eq!(data.dynamics.as_ref().unwrap().gain_db(), 0.0);
+            assert_eq!(data.dynamics.as_ref().unwrap().reduction_sequence(), 0);
+        }
     }
 
     #[test]

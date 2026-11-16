@@ -95,6 +95,10 @@ fn stream_status(
 
     StreamStatus {
         node_id,
+        post_volume_supported: super::user_volume::SUPPORTED
+            && control.domain() == SignalDomain::Playback,
+        user_volume: None,
+        user_muted: None,
         filter_node_id,
         filter_state: Some(filter_state),
         filter_error,

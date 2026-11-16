@@ -372,6 +372,26 @@ impl UnconnectedFilter {
 }
 
 impl ConnectedFilter {
+    pub(crate) fn handoff(&self, mode: u32) {
+        self.filter.callback_data.handoff(mode);
+    }
+
+    pub(crate) fn handoff_ack(&self) -> u32 {
+        self.filter.callback_data.handoff_ack()
+    }
+
+    pub(crate) fn held_audio_ns(&self) -> u64 {
+        self.filter.callback_data.held_audio_ns()
+    }
+
+    pub fn set_user_gain(&self, gain: f32) -> Result<(), &'static str> {
+        if !gain.is_finite() || !(0.0..=8.0).contains(&gain) {
+            return Err("user gain must be finite and in 0..8");
+        }
+        self.filter.callback_data.set_user_gain(gain);
+        Ok(())
+    }
+
     pub fn set_target_gain_db(&self, target_gain_db: f32) -> Result<(), &'static str> {
         self.filter.callback_data.set_target_gain_db(target_gain_db)
     }

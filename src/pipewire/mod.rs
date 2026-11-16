@@ -3,3 +3,4 @@
 pub mod filter;
 pub mod graph;
 pub mod routing;
+pub mod volume;

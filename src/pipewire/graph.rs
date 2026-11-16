@@ -15,6 +15,7 @@ use ::pipewire::{
     types::ObjectType,
 };
 
+use super::volume::NodeVolume;
 use crate::normalization::SignalDomain;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -83,6 +84,10 @@ pub enum GraphEvent {
 
 #[derive(Clone, Debug, Default)]
 pub struct GraphState {
+    pub node_volumes: HashMap<u32, (i32, NodeVolume)>,
+    pub volume_requests: HashMap<u32, i32>,
+    pub volume_replies: HashMap<u32, NodeVolume>,
+    pub node_serials: HashMap<u32, u64>,
     streams: HashMap<u32, DiscoveredStream>,
     streams_with_node_info: HashSet<u32>,
     ports: HashMap<u32, DiscoveredPort>,
@@ -134,6 +139,10 @@ impl GraphState {
     }
 
     pub fn remove_id(&mut self, id: u32) {
+        self.node_volumes.remove(&id);
+        self.volume_requests.remove(&id);
+        self.volume_replies.remove(&id);
+        self.node_serials.remove(&id);
         if let Some(stream) = self.streams.remove(&id) {
             self.streams_with_node_info.remove(&id);
             self.ports.retain(|_, port| port.node_id != stream.node_id);
@@ -233,6 +242,85 @@ pub struct GraphTracker {
     _nodes: Rc<RefCell<HashMap<u32, TrackedNode>>>,
 }
 
+impl GraphTracker {
+    pub fn read_volume(
+        &self,
+        core: &::pipewire::core::CoreRc,
+        node_id: u32,
+        sequence: i32,
+    ) -> Result<i32, String> {
+        use ::pipewire::proxy::ProxyT;
+        let nodes = self._nodes.borrow();
+        let tracked = nodes.get(&node_id).ok_or("stream node disappeared")?;
+        // SAFETY: this proxy ID belongs to a node bound on this core. The
+        // returned pointer is borrowed only while the tracked Node is alive.
+        let proxy = unsafe {
+            ::pipewire::sys::pw_core_find_proxy(core.as_raw_ptr(), tracked._node.upcast_ref().id())
+        };
+        if proxy.is_null() {
+            return Err("stream proxy disappeared".to_owned());
+        }
+        // The native protocol rewrites enum sequence IDs to its async result.
+        // The high-level wrapper drops that result, so retain it explicitly.
+        // SAFETY: the tracked proxy lives through this main-thread call.
+        let result = unsafe {
+            ::pipewire::spa::spa_interface_call_method!(
+                proxy,
+                ::pipewire::sys::pw_node_methods,
+                enum_params,
+                sequence,
+                ::pipewire::spa::param::ParamType::Props.as_raw(),
+                0,
+                1,
+                std::ptr::null()
+            )
+        };
+        if result < 0 {
+            Err(format!("enum Props failed: {result}"))
+        } else {
+            Ok(result)
+        }
+    }
+
+    pub fn write_volume(
+        &self,
+        core: &::pipewire::core::CoreRc,
+        node_id: u32,
+        volume: &NodeVolume,
+    ) -> Result<(), String> {
+        use ::pipewire::proxy::ProxyT;
+        let bytes = volume.serialize()?;
+        let pod =
+            ::pipewire::spa::pod::Pod::from_bytes(&bytes).ok_or("invalid serialized Props")?;
+        let nodes = self._nodes.borrow();
+        let tracked = nodes.get(&node_id).ok_or("stream node disappeared")?;
+        // SAFETY: this ID belongs to the live tracked node on this core.
+        let proxy = unsafe {
+            ::pipewire::sys::pw_core_find_proxy(core.as_raw_ptr(), tracked._node.upcast_ref().id())
+        };
+        if proxy.is_null() {
+            return Err("stream proxy disappeared".to_owned());
+        }
+        // SAFETY: the proxy and serialized Pod live through the synchronous
+        // marshaling call. PipeWire copies the Pod into the protocol message.
+        let result = unsafe {
+            ::pipewire::spa::spa_interface_call_method!(
+                proxy,
+                ::pipewire::sys::pw_node_methods,
+                set_param,
+                ::pipewire::spa::param::ParamType::Props.as_raw(),
+                0,
+                pod.as_raw_ptr()
+            )
+        };
+        if result < 0 {
+            Err(format!("set Props failed: {result}"))
+        } else {
+            Ok(())
+        }
+    }
+}
+
 pub fn track_graph(registry: &RegistryRc) -> (Rc<RefCell<GraphState>>, GraphTracker) {
     let state = Rc::new(RefCell::new(GraphState::default()));
     let added_state = Rc::clone(&state);
@@ -255,6 +343,15 @@ pub fn track_graph(registry: &RegistryRc) -> (Rc<RefCell<GraphState>>, GraphTrac
                 if !is_stream {
                     return;
                 }
+                if let Some(serial) = properties
+                    .get("object.serial")
+                    .and_then(|value| value.parse().ok())
+                {
+                    added_state
+                        .borrow_mut()
+                        .node_serials
+                        .insert(global.id, serial);
+                }
                 let Some(registry) = registry_weak.upgrade() else {
                     return;
                 };
@@ -266,6 +363,7 @@ pub fn track_graph(registry: &RegistryRc) -> (Rc<RefCell<GraphState>>, GraphTrac
                     }
                 };
                 let info_state = Rc::clone(&added_state);
+                let param_state = Rc::clone(&added_state);
                 let node_id = global.id;
                 let listener = node
                     .add_listener_local()
@@ -277,7 +375,19 @@ pub fn track_graph(registry: &RegistryRc) -> (Rc<RefCell<GraphState>>, GraphTrac
                             .borrow_mut()
                             .update_stream_properties(node_id, |key| properties.get(key));
                     })
+                    .param(move |sequence, id, _, _, pod| {
+                        if id == ::pipewire::spa::param::ParamType::Props
+                            && let Some(volume) = pod.and_then(NodeVolume::from_pod)
+                        {
+                            let mut state = param_state.borrow_mut();
+                            if state.volume_requests.get(&node_id) == Some(&sequence) {
+                                state.volume_replies.insert(node_id, volume.clone());
+                            }
+                            state.node_volumes.insert(node_id, (sequence, volume));
+                        }
+                    })
                     .register();
+                node.subscribe_params(&[::pipewire::spa::param::ParamType::Props]);
                 added_nodes.borrow_mut().insert(
                     node_id,
                     TrackedNode {

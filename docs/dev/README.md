@@ -6,6 +6,9 @@ Live test records are kept as dated reports under [`validation/`](validation/).
 
 ## Architecture
 
+The [downstream playback control contract](post-volume.md) describes IPC,
+first-command migration, user gain, restoration, and crash-recovery limits.
+
 The [loudness dynamics design](loudness-dynamics.md) documents the three layers,
 their timing and gain rules, percentile semantics, handover/reload ownership,
 and worked recovery timelines. Its
